@@ -120,6 +120,39 @@
   .cab .ci.no  .cb{background:rgba(248,81,73,.15);color:var(--hot)}
   .cab .cx{margin-top:5px;font-size:11px;line-height:1.35;color:var(--dim);white-space:normal}
   .cab .ce{padding:6px 2px;font-size:12px;color:var(--dim)}
+  /* ---- Spec 5: night banding ---- */
+  .moon{font-size:10px;margin-left:5px;opacity:.9;vertical-align:1px}
+  tr.night td{background:rgba(74,110,190,.09)}
+  tr.night td:first-child{box-shadow:inset 3px 0 0 #44639f}
+  tr.current.night td{background:rgba(255,140,66,.08)}
+  tr.current.night td:first-child{box-shadow:inset 3px 0 0 var(--kester)}
+  /* ---- Spec 5: elevation profile ---- */
+  .prof{position:relative}
+  .prof svg{display:block;width:100%;height:118px}
+  @media(max-width:860px){.prof svg{height:96px}}
+  .pdot{position:absolute;width:11px;height:11px;border-radius:50%;background:var(--kester);
+    border:2px solid #1a0e04;transform:translate(-50%,-50%);box-shadow:0 0 7px rgba(255,140,66,.7);pointer-events:none}
+  .proflab{position:relative;height:14px;margin-top:3px}
+  .pl{position:absolute;top:0;transform:translateX(-50%);font-size:9px;color:var(--dim);
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  .profstats{display:flex;gap:20px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--dim)}
+  .profstats b{color:var(--txt);font-weight:600;font-variant-numeric:tabular-nums}
+  /* ---- Spec 5: milestones ---- */
+  .ms{max-height:340px;overflow-y:auto}
+  .msr{display:flex;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid var(--line);font-size:13px}
+  .msr:last-child{border-bottom:0}
+  .msr .mi{width:16px;flex:none;text-align:center;font-size:11px}
+  .msr .mn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .msr .mt{color:var(--dim);font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .msr.up{opacity:.55} .msr.up .mn{color:var(--dim)}
+  .cpy{background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:6px;
+    font:inherit;font-size:10px;padding:2px 6px;cursor:pointer;flex:none}
+  .cpy:active{background:var(--accent);color:#04121f}
+  /* ---- Spec 5: rank sparkline ---- */
+  .spk{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+  .spk svg{display:block;width:100%;height:auto}
+  .spkhd{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:4px}
+  .spktx{font-size:11px;color:var(--dim);margin-top:5px;line-height:1.5}
 </style>
 </head>
 <body>
@@ -209,6 +242,11 @@
       </div>
       <div class="etahint" id="tgtHint"></div>
       <div id="nbrs" style="margin-top:12px"></div>
+      <div class="spk">
+        <div class="spkhd"><span>Overall rank history</span><span id="spkNow">—</span></div>
+        <svg id="spkSvg" viewBox="0 0 300 44" aria-hidden="true"></svg>
+        <div class="spktx" id="spkTx">building rank history…</div>
+      </div>
     </div>
 
     <div class="card col-12">
@@ -229,6 +267,21 @@
         <tbody></tbody>
       </table>
       </div>
+    </div>
+
+    <div class="card col-7">
+      <h2>Elevation profile</h2>
+      <div class="prof">
+        <svg id="profSvg" viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <span class="pdot" id="profDot" style="left:0%;top:50%;display:none"></span>
+      </div>
+      <div class="proflab" id="profLab"></div>
+      <div class="profstats" id="profStats"></div>
+    </div>
+
+    <div class="card col-5">
+      <h2>Milestones</h2>
+      <div class="ms" id="msList"></div>
     </div>
   </div>
 
@@ -324,6 +377,14 @@ const R_MIN=.55, R_MAX=3;              // ratio guard — never binds (2025 obse
 const R_MINM=2000, R_MINS=900;         // below 2 km OR 15 min on course the ratio is pinned to 1
 const STALE_MIN=20;                    // fix age above which the 2025 hint mentions it
 let Y25C=null, Y25M=null;              // decoded streams / derived median curve (lazy, once)
+// ---- Spec 5 ----
+const SUN_Z   = 96;                          // 96 = civil twilight (chosen); 90.833 = plain sunset
+const MID_LAT = 55.4, MID_LNG = -3.5;        // course-midpoint fallback for the sun maths
+const PROF_BUCKETS = 240;                    // 6347 course points -> ~600 path points
+const MS_KEY   = "utrk.ms."+RACE;            // milestone first-seen times
+const SNAP_KEY = "utrk.snaps."+RACE;         // DERIVED rank records only — never raw payloads
+const SNAP_STEP = 3600, SNAP_CONC = 4, SNAP_MAX_FETCH = 24, SNAP_V = 1;
+const M_FT = 3.28084;
 let map, layers = {}, initialised = false;
 
 const H = {headers:{Authorization:"Bearer "+KEY}};
@@ -389,6 +450,33 @@ function paceFromMs(distM,secs){ // -> seconds per current unit
 const HHMM = t=>new Date((t+3600)*1000).toISOString().slice(11,16); // BST (UTC+1)
 const DOW  = t=>["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date((t+3600)*1000).getUTCDay()];
 
+// ---- sun: NOAA arithmetic, client-side, no network. SUN_Z=96 => civil twilight. ----
+const _sun = {};
+function sunTimes(t, lat, lng){          // -> [riseUTC,setUTC] for the BST day of t, or null
+  const d = Math.floor((t+3600)/86400);                       // BST calendar-day index
+  const k = d+"|"+lat.toFixed(1)+"|"+lng.toFixed(1);
+  if(k in _sun) return _sun[k];
+  const rd=Math.PI/180, J=d+2440588-2451545+0.0008-lng/360;
+  const M=(357.5291+0.98560028*J)%360;
+  const C=1.9148*Math.sin(M*rd)+0.02*Math.sin(2*M*rd)+0.0003*Math.sin(3*M*rd);
+  const L=(M+C+282.9372)%360;
+  const Jt=2451545+J+0.0053*Math.sin(M*rd)-0.0069*Math.sin(2*L*rd);
+  const dec=Math.asin(Math.sin(L*rd)*Math.sin(23.4397*rd));
+  const cw=(Math.cos(SUN_Z*rd)-Math.sin(lat*rd)*Math.sin(dec))/(Math.cos(lat*rd)*Math.cos(dec));
+  const w = (cw>=-1&&cw<=1) ? Math.acos(cw)/(2*Math.PI) : null;
+  return _sun[k] = w===null ? null
+    : [Math.round((Jt-w-2440587.5)*86400), Math.round((Jt+w-2440587.5)*86400)];
+}
+let SUN_LAT = MID_LAT, SUN_LNG = MID_LNG;    // refreshed from his live fix each render
+function isDark(t, lat, lng){
+  if(!isFinite(t)) return false;
+  const s = sunTimes(t, isFinite(lat)?lat:SUN_LAT, isFinite(lng)?lng:SUN_LNG);
+  return s ? (t < s[0] || t >= s[1]) : false;              // no event at all => treat as light
+}
+const moonFor = (t,lat,lng)=> isDark(t,lat,lng) ? ' <span class="moon">🌙</span>' : '';
+const elev = m => UNIT==="km" ? `${Math.round(m).toLocaleString()} m`
+                              : `${Math.round(m*M_FT).toLocaleString()} ft`;
+
 // athlete_track -> [[lng,lat],…] oldest→newest; endpoint returns a bare array whose
 // single row holds a JSON *string* GeoJSON LineString, and carries no timestamps.
 function trackPts(trk){
@@ -444,7 +532,7 @@ function etaFor(remM, v, nowT){
   if(v<V_MIN)      return {clock:"stopped", count:"—", hint:"no movement in the last 10 min"};
   if(v>V_MAX)      return {clock:"—", count:"—", hint:"implausible pace — likely a tracker gap"};
   const secs=remM/v, at=Math.round(nowT+secs);
-  return {clock:`${HHMM(at)}<small> ${DOW(at)} BST</small>`,
+  return {clock:`${HHMM(at)}<small> ${DOW(at)} BST</small>${moonFor(at)}`,
           count:`${dur(secs)}<small> @ ${paceStr(paceFromMs(v,1))}</small>`, hint:""};
 }
 
@@ -506,6 +594,7 @@ async function load(){
     document.getElementById("err").style.display="none";
     render({ath:ath.rows, cp:cp.rows, ct:ct.rows, pos:pos.rows, course:crs.rows[0], cpts:cpts.rows, trk});
     document.getElementById("liveTxt").textContent = "live · updated "+HHMM(Math.floor(Date.now()/1000))+" BST";
+    rankHistory();          // fire-and-forget: async, self-guarded, updates only #spkSvg / #spkTx
   }catch(e){
     const el=document.getElementById("err");
     el.style.display="block";
@@ -544,6 +633,7 @@ function render(D){
   // Kester real distance covered = project current position onto route
   const kM = kp ? project([kp.lng,kp.lat],route,cum) : 0;
   const nowT = kp ? kp.time : Math.max(...D.pos.map(p=>p.time));
+  if(kp){ SUN_LAT = +kp.lat; SUN_LNG = +kp.lng; }     // sun maths follows him up the course
   const elapsed = nowT - start;
   // FIX-2/FIX-3: deduped, crew-free checkpoint_times for the WHOLE field, in one place.
   // ctBy is what the 2025-comparison features consume; ktimes keeps its old shape exactly.
@@ -757,6 +847,17 @@ function render(D){
         tr.innerHTML=`<td>${c.name}</td><td class="num">${distShort(c._m)}</td><td>—</td><td class="num">—</td><td><span class="pill pend">—</span></td>`;
       }
     }
+    // Spec 5 — night banding. bandT: arrival for done rows, now for the en-route row,
+    // projected arrival for pending rows. null => no credible time, so no marking.
+    const bandT = c.start ? null
+      : (rec && rec.time_utc) ? rec.time_utc
+      : tr.classList.contains("current") ? nowT
+      : (isFinite(v) && v>=V_MIN && v<=V_MAX) ? nowT + (c._m-kM)/v
+      : null;
+    if(bandT!==null && isDark(bandT, +c.lat, +c.lng)){
+      tr.classList.add("night");
+      if(tr.children[2]) tr.children[2].insertAdjacentHTML("beforeend",' <span class="moon">🌙</span>');
+    }
     tb.appendChild(tr);
   });
 
@@ -769,9 +870,241 @@ function render(D){
 
   CACHE=D;   // cache before the (decorative) map so a map hiccup never blanks the stats
 
+  // ---- Spec 5 panels — isolated exactly like drawMap, and after CACHE=D ----
+  try{
+    if(!PROF || PROF.totalM!==totalM) buildProfile(D, cum, cpsOrdered, totalM);   // once per data load
+    drawProfile(kM);
+    drawMilestones(cpsOrdered, totalM, ktimes, kM, nowT, start);
+    RCTX = {route, cum, athById, start, nowT, rank:rankIdx+1, n:runners.length,
+      gA: rankIdx>0 ? Math.round(Math.abs(runners[rankIdx-1].distance-kp.distance)*localFactor) : -1,
+      gB: rankIdx<runners.length-1
+            ? Math.round(Math.abs(runners[rankIdx+1].distance-kp.distance)*localFactor) : -1};
+    drawSpark();                        // pure redraw from cache — no network here, ever
+  }catch(e){ console.warn("spec5 panels skipped:", e.message); }
+
   // map — isolated so a Leaflet/tile failure can't break the dashboard
   try { drawMap(route, cum, cpsOrdered, runners, athById, kp, localFactor); }
   catch(e){ console.warn("map draw skipped:", e.message); }
+}
+
+// ================= Spec 5: elevation profile =================
+let PROF = null;
+const venueOf = c => (c.extra_text||"").split("**")[0]
+                       .replace(/\s*[-–—]\s*(no|support)\b.*$/i,"").trim();   // reuse Spec 3's helper if it has one
+function buildProfile(D, cum, cps, totalM){
+  const ele = D.cpts.map(p=>+p.ele), N = ele.length;
+  const asc = new Float64Array(N);
+  for(let i=1;i<N;i++) asc[i] = asc[i-1] + (ele[i]>ele[i-1] ? ele[i]-ele[i-1] : 0);   // no threshold: reproduces 9212 m
+  const eMax = Math.max(...ele), yTop = 8, yBot = 94;
+  const X = m => m/totalM*1000, Y = e => yBot - (e/(eMax*1.05))*(yBot-yTop);
+  // bucket decimation keeping each bucket's min AND max, so ridges and notches survive
+  const keep=[0];
+  for(let b=0;b<PROF_BUCKETS;b++){
+    const a=Math.floor(b*N/PROF_BUCKETS), z=Math.floor((b+1)*N/PROF_BUCKETS);
+    if(z<=a) continue;
+    let hi=a, lo=a;
+    for(let i=a;i<z;i++){ if(ele[i]>ele[hi])hi=i; if(ele[i]<ele[lo])lo=i; }
+    [a,hi,lo].sort((p,q)=>p-q).forEach(i=>{ if(i!==keep[keep.length-1]) keep.push(i); });
+  }
+  if(keep[keep.length-1]!==N-1) keep.push(N-1);
+  const line = keep.map((i,k)=>`${k?"L":"M"}${X(cum[i]).toFixed(1)},${Y(ele[i]).toFixed(1)}`).join(" ");
+  const area = `${line} L1000,100 L0,100 Z`;
+  const marks = cps.filter(c=>!c.start);
+  document.getElementById("profSvg").innerHTML =
+    `<defs><linearGradient id="pgrad" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1000" y2="0">`+
+      `<stop offset="0" stop-color="#ff8c42"/><stop offset="1" stop-color="#ffb703"/></linearGradient>`+
+      `<clipPath id="pclip"><rect id="pclipR" x="0" y="0" width="0" height="100"/></clipPath></defs>`+
+    `<path d="${area}" fill="#1c232d"/>`+
+    marks.map(c=>`<line x1="${X(c._m).toFixed(1)}" y1="0" x2="${X(c._m).toFixed(1)}" y2="100" `+
+                 `stroke="#2a3240" stroke-width="1" vector-effect="non-scaling-stroke"/>`).join("")+
+    `<path d="${area}" fill="url(#pgrad)" fill-opacity=".85" clip-path="url(#pclip)"/>`+
+    `<path d="${line}" fill="none" stroke="#8b98a9" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+  document.getElementById("profLab").innerHTML = marks.map((c,i)=>
+    `<span class="pl" style="left:${(c._m/totalM*100).toFixed(2)}%" title="${c.name} · ${venueOf(c)}">`+
+    `${c.finish?"F":i+1}</span>`).join("");
+  const hi = ele.indexOf(eMax);
+  PROF = {ele, asc, cum, totalM, X, Y, hiM:cum[hi], hiE:eMax,
+          dot:document.getElementById("profDot"), clip:document.getElementById("pclipR")};
+}
+function profIdx(m){                       // full-res index at true metres m
+  const c=PROF.cum; let lo=0, hi=c.length-1;
+  while(lo<hi){ const mid=(lo+hi)>>1; if(c[mid]<m) lo=mid+1; else hi=mid; }
+  return lo;
+}
+function drawProfile(kM){
+  if(!PROF) return;
+  const m = Math.max(0, Math.min(kM, PROF.totalM)), i = profIdx(m);
+  PROF.clip.setAttribute("width", PROF.X(m).toFixed(1));
+  PROF.dot.style.display = "block";
+  PROF.dot.style.left = (m/PROF.totalM*100).toFixed(2)+"%";
+  PROF.dot.style.top  = PROF.Y(PROF.ele[i]).toFixed(2)+"%";
+  const up = PROF.asc[i], tot = PROF.asc[PROF.asc.length-1];
+  document.getElementById("profStats").innerHTML =
+    `<span>Total ascent <b>${elev(tot)}</b></span>`+
+    `<span>Climbed <b>${elev(up)}</b></span>`+
+    `<span>Remaining <b>${elev(tot-up)}</b></span>`+
+    `<span>High point <b>${elev(PROF.hiE)}</b> at ${distShort(PROF.hiM)}</span>`;
+}
+
+// ================= Spec 5: milestones =================
+let MS_STORE = null, MS_FRESH = false, MS_TXT = [];
+function msLoad(){
+  if(MS_STORE) return MS_STORE;
+  let raw=null; try{ raw = localStorage.getItem(MS_KEY); }catch(e){}
+  MS_FRESH = !raw;                                    // nothing stored => first-ever visit
+  try{ MS_STORE = raw ? JSON.parse(raw) : {}; }catch(e){ MS_STORE={}; MS_FRESH=true; }
+  return MS_STORE;
+}
+function msSave(){ try{ localStorage.setItem(MS_KEY, JSON.stringify(MS_STORE)); }catch(e){} }
+function msDefs(cps, totalM){
+  const L=[];
+  let n=0;
+  cps.forEach(c=>{ if(c.start) return; n++;
+    L.push(c.finish
+      ? {id:"cp"+c.id, m:c._m, cp:c, name:"Finish · "+venueOf(c), sn:"the finish", verb:"reached"}
+      : {id:"cp"+c.id, m:c._m, cp:c, name:c.name+" · "+venueOf(c),
+         sn:`${c.name} (${venueOf(c)})`, verb:"reached"}); });
+  L.push({id:"d100k",m:100000, name:"100 km",    sn:"100 km",    verb:"passed"});
+  L.push({id:"d100m",m:160934, name:"100 miles", sn:"100 miles", verb:"passed"});
+  if(PROF) L.push({id:"high", m:PROF.hiM, name:`High point · ${Math.round(PROF.hiE)} m`,
+                   sn:`the ${Math.round(PROF.hiE)} m high point`, verb:"topped out on"});
+  L.push({id:"half", m:totalM/2, name:"Halfway", sn:"halfway", verb:"passed"});
+  L.push({id:"d200k",m:200000, name:"200 km",    sn:"200 km",    verb:"passed"});
+  L.push({id:"d300k",m:300000, name:"300 km",    sn:"300 km",    verb:"passed"});
+  return L.filter(x=>x.m<=totalM).sort((a,b)=>a.m-b.m);
+}
+function msSentence(x, t, totalM, start){
+  const togo = distShort(Math.max(0, totalM - x.m));
+  if(x.cp && x.cp.finish && t)
+    return `Kester FINISHED the Race Across Scotland at ${HHMM(t)} ${DOW(t)} — `+
+           `${distShort(totalM)} in ${((t-start)/3600).toFixed(1)} h! 🏁`;
+  if(!t) return `Kester has ${x.verb} ${x.sn} — ${togo} to go! 🏃`;
+  return `Kester ${x.verb} ${x.sn} at ${HHMM(t)} ${DOW(t)}, `+
+         `${Math.round((t-start)/3600)} h in — ${togo} to go! 🏃`;
+}
+function drawMilestones(cps, totalM, ktimes, kM, nowT, start){
+  const S = msLoad(), L = msDefs(cps, totalM);
+  let dirty=false;
+  L.forEach(x=>{
+    const rec = x.cp ? ktimes[x.cp.id] : null;
+    x.hit = x.cp ? !!(rec && rec.time_utc) : kM >= x.m;
+    if(!x.hit) return;
+    if(S[x.id]===undefined){                          // append-only: kM jitter can never unfire
+      S[x.id] = x.cp ? rec.time_utc : (MS_FRESH ? 0 : nowT);   // 0 = already past when first seen
+      dirty = true;
+    }
+  });
+  if(dirty || MS_FRESH) msSave();
+  MS_FRESH = false;                                   // unconditional: see B3-d
+  MS_TXT = [];
+  const done = L.filter(x=>x.hit).reverse();          // distance-ascending reversed == newest first
+  const up   = L.filter(x=>!x.hit).slice(0,3);
+  const clip = !!(navigator.clipboard && navigator.clipboard.writeText);
+  const html = done.map(x=>{
+    const t = S[x.id];
+    const i = MS_TXT.push(msSentence(x, t, totalM, start)) - 1;
+    return `<div class="msr"><span class="mi">${x.cp&&x.cp.finish?"🏁":"✓"}</span>`+
+           `<span class="mn">${x.name}</span>`+
+           `<span class="mt">${t ? HHMM(t)+" "+DOW(t) : "passed ✓"}</span>`+
+           (clip?`<button class="cpy" type="button" data-i="${i}">copy</button>`:"")+`</div>`;
+  }).join("") + up.map(x=>
+    `<div class="msr up"><span class="mi">·</span><span class="mn">${x.name}</span>`+
+    `<span class="mt">${distShort(Math.max(0,x.m-kM))} to go</span></div>`).join("");
+  document.getElementById("msList").innerHTML =
+    html || `<div class="msr up"><span class="mn">nothing yet — he's just started</span></div>`;
+}
+
+// ================= Spec 5: rank history (snapshot trick) =================
+let SNAPS=null, SNAP_BUSY=false, RCTX=null;
+function snapLoad(){
+  if(SNAPS) return SNAPS;
+  let o=null; try{ o=JSON.parse(localStorage.getItem(SNAP_KEY)||"null"); }catch(e){}
+  return SNAPS = (o && o.v===SNAP_V && o.s) ? o.s : {};
+}
+function snapSave(){
+  try{
+    const ks=Object.keys(SNAPS).sort((a,b)=>a-b);
+    while(ks.length>200) delete SNAPS[ks.shift()];        // defensive; a 100 h race needs ~100
+    localStorage.setItem(SNAP_KEY, JSON.stringify({v:SNAP_V,s:SNAPS}));
+  }catch(e){}
+}
+// derive one compact record. Ranking mirrors render() exactly (Mercator distance, crew filtered),
+// so the sparkline's last point always equals the rank printed above it. One project() per snapshot.
+function snapRec(rows){
+  const rn = rows.filter(p=>RCTX.athById[p.athlete_id] && !RCTX.athById[p.athlete_id].crew)
+                 .sort((a,b)=>b.distance-a.distance);
+  const i = rn.findIndex(p=>p.athlete_id===KESTER);
+  if(i<0) return null;
+  const kp = rn[i], kM = project([kp.lng,kp.lat],RCTX.route,RCTX.cum);
+  const f  = kp.distance>0 ? kM/kp.distance : 1;
+  const g  = j => (j>=0 && j<rn.length) ? Math.round(Math.abs(rn[j].distance-kp.distance)*f) : -1;
+  return [i+1, rn.length, g(i-1), g(i+1), g(0)];
+}
+async function rankHistory(){                 // called from load() AFTER render(); never from render()
+  if(SNAP_BUSY || !RCTX) return;
+  SNAP_BUSY = true;
+  try{
+    const S = snapLoad(), want = [];
+    for(let t=RCTX.start+SNAP_STEP; t<=RCTX.nowT; t+=SNAP_STEP) if(!S[t]) want.push(t);
+    want.reverse();                                             // newest first: useful window appears first
+    const todo = want.slice(0, SNAP_MAX_FETCH);                 // rest picked up by the next 60 s poll
+    let next=0, changed=false;
+    const worker = async ()=>{
+      while(next < todo.length){
+        const t = todo[next++];
+        try{
+          const r = await get(`latest_positions?course_ids%5B%5D=${COURSE}`+
+                              `&start_time_utc=0&end_time_utc=${t}&table=positions`);
+          const rec = snapRec(r.rows);
+          if(rec){ S[t]=rec; changed=true; drawSpark(); }       // build up visibly
+        }catch(e){ /* one missing hour is just a gap; the next load retries it */ }
+      }
+    };
+    await Promise.all(Array.from({length:Math.min(SNAP_CONC,todo.length)}, worker));
+    if(changed){ snapSave(); drawSpark(); }
+  }catch(e){ console.warn("rank history skipped:", e.message); }
+  finally{ SNAP_BUSY = false; }
+}
+function drawSpark(){
+  const svg=document.getElementById("spkSvg"), tx=document.getElementById("spkTx");
+  if(!svg || !RCTX) return;
+  const S=snapLoad();
+  const pts=Object.keys(S).map(Number).sort((a,b)=>a-b).map(t=>({t, r:S[t][0]}));
+  if(RCTX.rank) pts.push({t:RCTX.nowT, r:RCTX.rank});           // live tail always terminates the line
+  document.getElementById("spkNow").textContent = RCTX.rank ? `now ${RCTX.rank} / ${RCTX.n}` : "—";
+  if(pts.length<3){
+    svg.style.display="none"; svg.innerHTML="";
+    tx.textContent = `building rank history… (${pts.length} of `+
+      `${Math.max(1,Math.floor((RCTX.nowT-RCTX.start)/SNAP_STEP))} hours)`;
+    return;
+  }
+  svg.style.display="block";
+  const W=300,H=44,P=5,RGT=22;                                   // RGT: room for the rank label
+  const t0=pts[0].t, t1=pts[pts.length-1].t;
+  const rs=pts.map(p=>p.r), rMin=Math.min(...rs), rMax=Math.max(...rs);
+  const X=t=>P+(t1>t0?(t-t0)/(t1-t0):0)*(W-2*P-RGT);
+  const Y=r=>rMax>rMin ? P+(r-rMin)/(rMax-rMin)*(H-2*P) : H/2;   // rank 1 at top => up = better
+  const d=pts.map((p,i)=>`${i?"L":"M"}${X(p.t).toFixed(1)},${Y(p.r).toFixed(1)}`).join(" ");
+  const L=pts[pts.length-1];
+  svg.innerHTML =
+    `<path d="${d} L${X(L.t).toFixed(1)},${H} L${X(t0).toFixed(1)},${H} Z" fill="rgba(74,163,255,.12)"/>`+
+    `<path d="${d}" fill="none" stroke="#4aa3ff" stroke-width="1.5" stroke-linejoin="round"/>`+
+    `<circle cx="${X(L.t).toFixed(1)}" cy="${Y(L.r).toFixed(1)}" r="3" fill="#ff8c42"/>`+
+    `<text x="${(X(L.t)+6).toFixed(1)}" y="${(Y(L.r)+3.5).toFixed(1)}" font-size="10" fill="#ff8c42">${L.r}</text>`+
+    `<text x="${P}" y="9" font-size="8" fill="#8b98a9">${rMin}</text>`+
+    `<text x="${P}" y="${H-1}" font-size="8" fill="#8b98a9">${rMax}</text>`;
+  let ref=null, bd=Infinity;
+  pts.forEach(p=>{ const dd=Math.abs(p.t-(L.t-4*3600)); if(dd<bd){bd=dd;ref=p;} });
+  let mv="";
+  if(ref && ref!==L){
+    const h=Math.max(1,Math.round((L.t-ref.t)/3600)), n=ref.r-L.r;
+    mv = n>0 ? `passed ${n} in the last ${h} h`
+       : n<0 ? `lost ${-n} place${-n>1?"s":""} in the last ${h} h`
+             : `holding position over the last ${h} h`;
+  }
+  tx.textContent = [mv,
+    RCTX.gA>=0 ? `gap ahead ${distShort(RCTX.gA)}` : null,
+    RCTX.gB>=0 ? `behind ${distShort(RCTX.gB)}`    : null].filter(Boolean).join(" · ");
 }
 
 function drawMap(route, cum, cps, runners, athById, kp, localFactor){
@@ -843,6 +1176,14 @@ tgtEl.addEventListener("change",e=>{
 });
 tgtEl.addEventListener("keydown",e=>{ if(e.key==="Enter") e.target.blur(); });   // iOS: commit + dismiss keypad
 syncTgt(true);                                                                   // paint stored target before first fetch
+
+document.getElementById("msList").addEventListener("click",e=>{      // delegated: survives re-render
+  const b=e.target.closest(".cpy"); if(!b) return;
+  const txt=MS_TXT[+b.dataset.i]; if(txt===undefined) return;
+  try{ navigator.clipboard.writeText(txt).then(
+        ()=>{ b.textContent="copied"; setTimeout(()=>{b.textContent="copy";},1500); },
+        ()=>{} ); }catch(err){}                                      // fail silently (B3-h)
+});
 
 load();
 setInterval(load, REFRESH_MS);
