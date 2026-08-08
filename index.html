@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Kester Webb · Race Across Scotland 2026</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c232d; --line:#2a3240;
+    --txt:#e6edf3; --dim:#8b98a9; --accent:#4aa3ff; --good:#3fb950; --warn:#d29922; --hot:#f85149;
+    --kester:#ff8c42;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  a{color:var(--accent)}
+  .wrap{max-width:1180px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+  header h1{font-size:19px;margin:0;font-weight:600;letter-spacing:.2px}
+  header .sub{color:var(--dim);font-size:13px}
+  .spacer{flex:1}
+  .live{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--dim);
+    background:var(--panel);border:1px solid var(--line);padding:5px 10px;border-radius:20px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 0 0 rgba(63,185,80,.6);animation:pulse 2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(63,185,80,.5)}70%{box-shadow:0 0 0 7px rgba(63,185,80,0)}100%{box-shadow:0 0 0 0 rgba(63,185,80,0)}}
+  .toggle{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:12px}
+  .toggle button{background:var(--panel);color:var(--dim);border:0;padding:6px 12px;cursor:pointer}
+  .toggle button.on{background:var(--accent);color:#04121f;font-weight:600}
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h2{margin:0 0 12px;font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);font-weight:600}
+  .col-4{grid-column:span 4} .col-5{grid-column:span 5} .col-6{grid-column:span 6}
+  .col-7{grid-column:span 7} .col-8{grid-column:span 8} .col-12{grid-column:span 12}
+  @media(max-width:860px){.col-4,.col-5,.col-6,.col-7,.col-8{grid-column:span 12}}
+  .hero{display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap}
+  .bib{width:64px;height:64px;flex:none;border-radius:12px;background:var(--kester);color:#1a0e04;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:700;line-height:1}
+  .bib small{font-size:10px;font-weight:600;opacity:.75;margin-bottom:2px}
+  .bib b{font-size:22px}
+  .heronm{font-size:20px;font-weight:600}
+  .herometa{color:var(--dim);font-size:13px;margin-top:2px}
+  .bigstats{display:flex;gap:26px;flex-wrap:wrap;margin-top:6px}
+  .stat .v{font-size:26px;font-weight:700;line-height:1.1}
+  .stat .v small{font-size:14px;color:var(--dim);font-weight:500}
+  .stat .l{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin-top:3px}
+  .progress{margin-top:16px}
+  .bar{height:12px;border-radius:8px;background:var(--panel2);position:relative;overflow:hidden;border:1px solid var(--line)}
+  .bar > i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#ff8c42,#ffb703);border-radius:8px}
+  .barlabels{display:flex;justify-content:space-between;color:var(--dim);font-size:11px;margin-top:5px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:8px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  tr.done td{color:var(--txt)} tr.pending td{color:var(--dim)}
+  tr.current{background:rgba(255,140,66,.08)}
+  tr.current td:first-child{box-shadow:inset 3px 0 0 var(--kester)}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;font-weight:600}
+  .pill.done{background:rgba(63,185,80,.15);color:var(--good)}
+  .pill.now{background:rgba(255,140,66,.18);color:var(--kester)}
+  .pill.pend{background:var(--panel2);color:var(--dim)}
+  #map{height:420px;border-radius:10px;border:1px solid var(--line)}
+  .leaflet-container{background:#0a0e14}
+  .nbr{display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px solid var(--line);font-size:13px}
+  .nbr:last-child{border-bottom:0}
+  .nbr .rk{width:30px;color:var(--dim);text-align:right;font-variant-numeric:tabular-nums}
+  .nbr .nm{flex:1;overflow:hidden;text-overflow:ellipsis}
+  .nbr .gap{color:var(--dim);font-variant-numeric:tabular-nums}
+  .nbr.me{background:rgba(255,140,66,.1);border-radius:8px}
+  .nbr.me .nm{color:var(--kester);font-weight:600}
+  .foot{color:var(--dim);font-size:11px;text-align:center;margin:22px 0 8px;line-height:1.6}
+  .err{background:rgba(248,81,73,.12);border:1px solid var(--hot);color:#ffb4af;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:12px;display:none}
+  .cpdot{background:#fff;border:2px solid #333;border-radius:50%;width:10px;height:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Kester Webb <span class="sub">· bib 180</span></h1>
+      <div class="sub" id="raceName">Race Across Scotland 215</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="toggle" id="unitToggle">
+      <button data-u="km" class="on">km / km·h</button>
+      <button data-u="mi">mi / mph</button>
+    </div>
+    <div class="live"><span class="dot"></span><span id="liveTxt">connecting…</span></div>
+  </header>
+
+  <div class="err" id="err"></div>
+
+  <div class="grid">
+    <div class="card col-7">
+      <div class="hero">
+        <div class="bib"><small>BIB</small><b>180</b></div>
+        <div style="flex:1">
+          <div class="heronm" id="hName">Kester Webb</div>
+          <div class="herometa" id="hMeta">—</div>
+          <div class="bigstats">
+            <div class="stat"><div class="v" id="sDist">—</div><div class="l">Distance covered</div></div>
+            <div class="stat"><div class="v" id="sSpeed">—</div><div class="l">Current speed</div></div>
+            <div class="stat"><div class="v" id="sPace">—</div><div class="l">Avg pace</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="progress">
+        <div class="bar"><i id="progBar" style="width:0%"></i></div>
+        <div class="barlabels"><span>Portpatrick</span><span id="progPct">0%</span><span>Cockburnspath</span></div>
+      </div>
+    </div>
+
+    <div class="card col-5">
+      <h2>Field position</h2>
+      <div class="bigstats" style="margin-top:0">
+        <div class="stat"><div class="v" id="rkOverall">—</div><div class="l">Overall</div></div>
+        <div class="stat"><div class="v" id="rkGender">—</div><div class="l">Male</div></div>
+        <div class="stat"><div class="v" id="rkNext">—</div><div class="l">Next checkpoint</div></div>
+      </div>
+      <div id="nbrs" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card col-7">
+      <h2>Course map</h2>
+      <div id="map"></div>
+    </div>
+
+    <div class="card col-5">
+      <h2>Checkpoint splits</h2>
+      <div style="overflow-x:auto">
+      <table id="splits">
+        <thead><tr><th>Checkpoint</th><th class="num">Dist</th><th>Arrived</th><th class="num">Seg pace</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot" id="foot">—</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const API   = "https://racetracker-rails-production.onrender.com/api/v1";
+const KEY   = "issmAXFLJmQHpuX-e4f94FRVEDwKrgDYT8z9EVdhEwPaUdcJ";
+const RACE  = 1274, COURSE = 1992, KESTER = 148782;
+const REFRESH_MS = 60000;
+let UNIT = "km";                       // "km" | "mi"
+let map, layers = {}, initialised = false;
+
+const H = {headers:{Authorization:"Bearer "+KEY}};
+const get = (path)=>fetch(`${API}/races/${RACE}/${path}`,H).then(r=>{if(!r.ok)throw new Error(path+" "+r.status);return r.json();});
+
+// ---- geo helpers ----
+const R = 6371000;
+const rad = d=>d*Math.PI/180;
+function hav(a,b){ // [lng,lat]
+  const la1=rad(a[1]),la2=rad(b[1]),dla=rad(b[1]-a[1]),dlo=rad(b[0]-a[0]);
+  const h=Math.sin(dla/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin(dlo/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+// nearest index on course polyline to a point, returns {i,dist_m along route}
+function project(pt, route, cum){
+  let best=Infinity, bi=0;
+  for(let i=0;i<route.length;i++){
+    const d=hav(pt,route[i]);
+    if(d<best){best=d;bi=i;}
+  }
+  return cum[bi];
+}
+
+// ---- unit formatting ----
+function dist(m){ // metres -> primary string
+  const km=m/1000, mi=m/1609.34;
+  return UNIT==="km" ? `${km.toFixed(1)}<small> km · ${mi.toFixed(1)} mi</small>`
+                     : `${mi.toFixed(1)}<small> mi · ${km.toFixed(1)} km</small>`;
+}
+function distShort(m){const km=m/1000,mi=m/1609.34;return UNIT==="km"?`${km.toFixed(1)} km`:`${mi.toFixed(1)} mi`;}
+function speed(ms){ const kmh=ms*3.6, mph=ms*2.23694;
+  return UNIT==="km"?`${kmh.toFixed(1)}<small> km/h</small>`:`${mph.toFixed(1)}<small> mph</small>`;}
+function paceStr(secPerUnit){ // seconds per km or per mile depending on UNIT
+  if(!isFinite(secPerUnit)||secPerUnit<=0) return "—";
+  const m=Math.floor(secPerUnit/60), s=Math.round(secPerUnit%60);
+  return `${m}:${String(s).padStart(2,"0")}<small> /${UNIT}</small>`;
+}
+function paceFromMs(distM,secs){ // -> seconds per current unit
+  if(distM<=0) return NaN;
+  const perM = secs/distM;
+  return UNIT==="km" ? perM*1000 : perM*1609.34;
+}
+const HHMM = t=>new Date((t+3600)*1000).toISOString().slice(11,16); // BST (UTC+1)
+const DOW  = t=>["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date((t+3600)*1000).getUTCDay()];
+
+let CACHE = {};
+
+async function load(){
+  try{
+    const [ath,cp,ct,pos,crs,cpts] = await Promise.all([
+      get("athletes"), get("checkpoints"),
+      get(`checkpoint_times?course_ids%5B%5D=${COURSE}&race_start_time_utc=`),
+      get(`latest_positions?course_ids%5B%5D=${COURSE}&start_time_utc=0&end_time_utc=9999999999&table=positions`),
+      get("courses"), get(`course_points?course_id=${COURSE}`)
+    ]);
+    document.getElementById("err").style.display="none";
+    render({ath:ath.rows, cp:cp.rows, ct:ct.rows, pos:pos.rows, course:crs.rows[0], cpts:cpts.rows});
+    document.getElementById("liveTxt").textContent = "live · updated "+HHMM(Math.floor(Date.now()/1000))+" BST";
+  }catch(e){
+    const el=document.getElementById("err");
+    el.style.display="block";
+    el.textContent="Couldn't reach the tracker API ("+e.message+"). Retrying in 60s. If you opened this over a slow link the first load can lag — the backend also cold-starts after idle.";
+    document.getElementById("liveTxt").textContent="reconnecting…";
+  }
+}
+
+function render(D){
+  const start = D.course.start_time;
+  const athById = Object.fromEntries(D.ath.map(a=>[a.id,a]));
+  document.getElementById("raceName").textContent = D.course.name;
+
+  // course polyline + cumulative REAL distance
+  const route = D.cpts.map(p=>[+p.lng,+p.lat]);
+  const cum = [0];
+  for(let i=1;i<route.length;i++) cum[i]=cum[i-1]+hav(route[i-1],route[i]);
+  const totalM = cum[cum.length-1];
+
+  // checkpoint real distances by projecting each onto route
+  const cpsOrdered = D.cp.filter(c=>c.on_map).sort((a,b)=>a.sort-b.sort);
+  cpsOrdered.forEach(c=>{ c._m = project([c.lng,c.lat],route,cum); });
+
+  // ranking by (mercator) distance among non-crew runners — monotonic so rank is exact
+  const runners = D.pos.filter(p=>athById[p.athlete_id] && !athById[p.athlete_id].crew)
+                       .sort((a,b)=>b.distance-a.distance);
+  const rankIdx = runners.findIndex(p=>p.athlete_id===KESTER);
+  const kp = runners[rankIdx];
+  const males = runners.filter(p=>athById[p.athlete_id].gender==="M");
+  const gRank = males.findIndex(p=>p.athlete_id===KESTER)+1;
+  const a = athById[KESTER];
+
+  // Kester real distance covered = project current position onto route
+  const kM = kp ? project([kp.lng,kp.lat],route,cum) : 0;
+  const nowT = kp ? kp.time : Math.max(...D.pos.map(p=>p.time));
+  const elapsed = nowT - start;
+
+  // hero
+  document.getElementById("hName").textContent = `${a.first_name} ${a.last_name}`;
+  document.getElementById("hMeta").innerHTML =
+    `${a.country||""} · started ${DOW(start)} ${HHMM(start)} BST · ${(elapsed/3600).toFixed(1)} h on course`;
+  document.getElementById("sDist").innerHTML = dist(kM);
+  document.getElementById("sSpeed").innerHTML = kp ? speed(kp.speed_est) : "—";
+  document.getElementById("sPace").innerHTML = paceStr(paceFromMs(kM, elapsed));
+  const pct = Math.min(100, kM/totalM*100);
+  document.getElementById("progBar").style.width = pct+"%";
+  document.getElementById("progPct").textContent = pct.toFixed(1)+"% · "+distShort(totalM-kM)+" to go";
+
+  // field position
+  document.getElementById("rkOverall").innerHTML = `${rankIdx+1}<small> / ${runners.length}</small>`;
+  document.getElementById("rkGender").innerHTML  = `${gRank}<small> / ${males.length}</small>`;
+  const nextCp = cpsOrdered.find(c=>c._m > kM - 300);
+  document.getElementById("rkNext").innerHTML = nextCp
+    ? `<span style="font-size:15px">${nextCp.name}</span><small style="display:block">${distShort(Math.max(0,nextCp._m-kM))} away</small>`
+    : "—";
+
+  // neighbours
+  const localFactor = kp && kp.distance>0 ? kM/kp.distance : 1;
+  const nb = document.getElementById("nbrs"); nb.innerHTML="";
+  for(let i=Math.max(0,rankIdx-3); i<=Math.min(runners.length-1,rankIdx+3); i++){
+    const p=runners[i], ai=athById[p.athlete_id];
+    const gapM=(p.distance-kp.distance)*localFactor;
+    const gap = i===rankIdx ? "" : (gapM>=0?"+":"−")+distShort(Math.abs(gapM));
+    const row=document.createElement("div");
+    row.className="nbr"+(p.athlete_id===KESTER?" me":"");
+    row.innerHTML=`<div class="rk">${i+1}</div><div class="nm">${ai.first_name} ${ai.last_name} <span style="color:var(--dim)">·${ai.bib}</span></div><div class="gap">${gap}</div>`;
+    nb.appendChild(row);
+  }
+
+  // splits with per-segment pace (real distances)
+  const ktimes = {}; D.ct.forEach(r=>{ if(r.athlete_id===KESTER) ktimes[r.checkpoint_id]=r; });
+  const tb=document.querySelector("#splits tbody"); tb.innerHTML="";
+  let prevT=start, prevM=0, lastDoneM=0;
+  const rows=[{name:"Start",_m:0,id:"start",start:true},...cpsOrdered.filter(c=>!c.start)];
+  rows.forEach(c=>{
+    const rec = c.start ? {time_utc:start} : ktimes[c.id];
+    const tr=document.createElement("tr");
+    if(rec && rec.time_utc){
+      const segM=c._m-prevM, segS=rec.time_utc-prevT;
+      const pace = c.start ? "—" : paceStr(paceFromMs(segM,segS));
+      tr.className="done";
+      tr.innerHTML=`<td>${c.name}</td><td class="num">${distShort(c._m)}</td><td>${DOW(rec.time_utc)} ${HHMM(rec.time_utc)}</td><td class="num">${pace}</td><td><span class="pill done">✓</span></td>`;
+      prevT=rec.time_utc; prevM=c._m; lastDoneM=c._m;
+    } else {
+      // in-progress row for the checkpoint he's currently heading to
+      const heading = c._m>lastDoneM && (prevM===lastDoneM);
+      if(heading && prevM===lastDoneM){
+        const segM=kM-prevM, segS=nowT-prevT;
+        tr.className="pending current";
+        tr.innerHTML=`<td>${c.name}</td><td class="num">${distShort(c._m)}</td><td>en route</td><td class="num">${paceStr(paceFromMs(segM,segS))}</td><td><span class="pill now">now</span></td>`;
+        prevM=c._m; // prevent multiple "current"
+      } else {
+        tr.className="pending";
+        tr.innerHTML=`<td>${c.name}</td><td class="num">${distShort(c._m)}</td><td>—</td><td class="num">—</td><td><span class="pill pend">—</span></td>`;
+      }
+    }
+    tb.appendChild(tr);
+  });
+
+  // footer
+  const leader = runners[0], la=athById[leader.athlete_id];
+  document.getElementById("foot").innerHTML =
+    `Leader: ${la.first_name} ${la.last_name} (bib ${la.bib}), ${distShort(project([leader.lng,leader.lat],route,cum))} · `+
+    `Field: ${runners.length} runners tracked · Cutoff Wed 10:00 BST (100 h)<br>`+
+    `Live data from racetracker.no · distances derived by projecting GPS positions onto the official course · refreshes every 60 s`;
+
+  CACHE=D;   // cache before the (decorative) map so a map hiccup never blanks the stats
+
+  // map — isolated so a Leaflet/tile failure can't break the dashboard
+  try { drawMap(route, cpsOrdered, runners, athById, kp, localFactor); }
+  catch(e){ console.warn("map draw skipped:", e.message); }
+}
+
+function drawMap(route, cps, runners, athById, kp, localFactor){
+  const latlngs = route.map(p=>[p[1],p[0]]);
+  if(!initialised){
+    map = L.map("map",{zoomControl:true,attributionControl:false});
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{maxZoom:19,subdomains:"abcd"}).addTo(map);
+    layers.course = L.polyline(latlngs,{color:"#3a4b63",weight:3}).addTo(map);
+    layers.done   = L.polyline([],{color:"#ff8c42",weight:4}).addTo(map);
+    layers.cps    = L.layerGroup().addTo(map);
+    layers.others = L.layerGroup().addTo(map);
+    layers.me     = L.circleMarker([0,0],{radius:8,color:"#1a0e04",weight:2,fillColor:"#ff8c42",fillOpacity:1}).addTo(map);
+    map.fitBounds(latlngs);
+    initialised=true;
+  } else {
+    layers.course.setLatLngs(latlngs);
+  }
+  // done portion of course up to Kester (by nearest index)
+  if(kp){
+    let bi=0,best=Infinity;
+    for(let i=0;i<route.length;i++){const d=hav([kp.lng,kp.lat],route[i]); if(d<best){best=d;bi=i;}}
+    layers.done.setLatLngs(latlngs.slice(0,bi+1));
+    layers.me.setLatLng([kp.lat,kp.lng]);
+    layers.me.bindTooltip(`Kester · ${athById[KESTER].first_name} ${athById[KESTER].last_name}`,{permanent:false});
+  }
+  // checkpoints
+  layers.cps.clearLayers();
+  cps.forEach(c=>{
+    L.circleMarker([c.lat,c.lng],{radius:4,color:"#c9d4e0",weight:1.5,fillColor:"#161b22",fillOpacity:1})
+      .bindTooltip(`${c.name}${c.extra_text?" · "+c.extra_text.split("*")[0].trim():""}`,{direction:"top"})
+      .addTo(layers.cps);
+  });
+  // a few runners around Kester
+  layers.others.clearLayers();
+  const kIdx = runners.findIndex(p=>p.athlete_id===KESTER);
+  runners.slice(Math.max(0,kIdx-3),kIdx+4).forEach(p=>{
+    if(p.athlete_id===KESTER) return;
+    const ai=athById[p.athlete_id];
+    L.circleMarker([p.lat,p.lng],{radius:5,color:"#0d1117",weight:1,fillColor:"#4aa3ff",fillOpacity:.85})
+      .bindTooltip(`${ai.first_name} ${ai.last_name} · bib ${ai.bib}`,{direction:"top"})
+      .addTo(layers.others);
+  });
+}
+
+// unit toggle
+document.getElementById("unitToggle").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b)return;
+  UNIT=b.dataset.u;
+  document.querySelectorAll("#unitToggle button").forEach(x=>x.classList.toggle("on",x===b));
+  if(CACHE.course) render(CACHE);
+});
+
+load();
+setInterval(load, REFRESH_MS);
+</script>
+</body>
+</html>
