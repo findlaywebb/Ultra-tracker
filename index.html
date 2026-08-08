@@ -320,9 +320,12 @@ let PACE = "t10";                      // "t10" | "seg" | "all"
 const TRK_BACK_S = 3600, TRK_FWD_S = 3600;   // request window (wide: skew-proof, indexed from end)
 const TRK_CAD_S  = 300, TRK_PTS = 3;         // ~5 min fix cadence; 3 pts => 600 s baseline
 const V_MIN = 0.15, V_MAX = 6.0;             // m/s plausibility clamp (stopped / bad data)
+const PRJ_TOL = 150;                         // m: slack on the chord bound for GPS noise + polyline sampling
 const STALE_AMB = 600, STALE_RED = 1800;     // s: latest-fix age -> "tracker quiet" / "no signal"
 const STILL_M = 75, STILL_S = 900;           // stationary = <75 m of course progress over >=15 min
-const MOV_KEY = "utrk.moves", MOV_CAP = 288; // (time,metres) log; 288 * 300 s = 24 h, ~6 KB
+// (time,lng,lat) log; 288 * 300 s = 24 h, ~9 KB. Key bumped from "utrk.moves": the old log
+// held projected COURSE metres, which the shape check below silently discards on first load.
+const MOV_KEY = "utrk.moves2", MOV_CAP = 288;
 const PRJ_S = 48;                            // project(): route block size (benchmarked optimum)
 let MOVES = [];
 try{ MOVES = JSON.parse(localStorage.getItem(MOV_KEY)) || []; }catch(e){}
@@ -692,12 +695,27 @@ function render(D){
   // and the ETA card's 10-min mode. TRUE metres along route, oldest -> newest.
   const tp  = trackPts(D.trk);
   const tpM = tp.map(p=>project(p,route,cum));
-  const v10 = tpM.length>=TRK_PTS
-    ? (tpM[tpM.length-1] - tpM[tpM.length-TRK_PTS]) / ((TRK_PTS-1)*TRK_CAD_S)
+  // Raw ground path over the same 600 s window: haversine between consecutive fixes, no
+  // projection involved. Undercuts true distance 13-50 % (5-min fixes cut every corner),
+  // so it is only ever used as a BOUND and as a labelled fallback — never as a distance.
+  let dPath = 0;
+  for(let i=Math.max(1, tp.length-TRK_PTS+1); i<tp.length; i++) dPath += hav(tp[i-1], tp[i]);
+  const vGnd = tp.length>=TRK_PTS ? dPath/((TRK_PTS-1)*TRK_CAD_S) : NaN;
+  // project() returns the NEAREST COURSE VERTEX. Six stretches of this course double back
+  // within 1-130 m of themselves (CP2, CP3, CP7, CP8, ~283 km, CP11 — 11.5 km total, worst
+  // ambiguity 4.8 km at CP3), so 10 m of GPS noise can swap which strand wins and move the
+  // projection kilometres while he walks a few hundred metres. Negative or physically
+  // impossible course progress is that artefact, never a fact about him: withhold it rather
+  // than publish "stopped". Bound calibrated on live data: legit dProj/dPath p95 = 1.57,
+  // max 2.0; the CP3 snaps were 4.7-4.8 and negative.
+  const dProj = tpM.length>=TRK_PTS ? tpM[tpM.length-1] - tpM[tpM.length-TRK_PTS] : NaN;
+  const v10 = (isFinite(dProj) && dProj >= 0 && dProj <= 3*dPath + PRJ_TOL)
+    ? dProj / ((TRK_PTS-1)*TRK_CAD_S)
     : NaN;
   // current pace source, in priority order (labelled, never silently substituted)
   let vNow = v10, vSrc = "· last 10 min";
   if(!isFinite(vNow) && tpM.length===2){ vNow = (tpM[1]-tpM[0])/TRK_CAD_S; vSrc = "· last 5 min"; }
+  if(!isFinite(vNow) && isFinite(vGnd)){ vNow = vGnd; vSrc = "· ground speed"; }
   if(!isFinite(vNow) && kp && isFinite(kp.speed_est)){
     vNow = kp.speed_est * Math.cos(rad(kp.lat));   // de-inflate Mercator by 1/sec(lat); ~1% of truth
     vSrc = "· tracker estimate";
@@ -719,25 +737,36 @@ function render(D){
 
   // ---- is he moving? ---- (about HIM; the header pill is about the API poll)
   // Movement log: the last hour is re-derived from athlete_track at synthesised times
-  // (newest track point == latest_positions, cadence 300 s +-1%); older entries persist
-  // from earlier renders and survive a reload via localStorage.
+  // (newest track point == latest_positions, cadence 300 s +-1%, both verified live);
+  // older entries persist from earlier renders and survive a reload via localStorage.
+  // Entries are RAW [unix_seconds, lng, lat] — deliberately NOT projected course metres.
+  // project() snaps to the nearest course vertex, and six stretches of this course pass
+  // within 1-130 m of themselves (11.5 km total, worst 4.8 km of ambiguity at CP3), so a
+  // projected log reports phantom kilometres while he stands still at a checkpoint, and
+  // reports stillness as movement. Raw position needs no course at all: it is honest on
+  // an out-and-back, on a detour, and when he is off the line entirely.
+  const r5 = v => Math.round(v*1e5)/1e5;                  // ~1.1 m, keeps the log ~9 KB
   if(kp){
-    if(tpM.length){
-      const t0 = nowT - (tpM.length-1)*TRK_CAD_S;
-      MOVES = MOVES.filter(p=>Array.isArray(p) && p[0] < t0 && p[0] > nowT-172800);
-      for(let i=0;i<tpM.length;i++) MOVES.push([nowT-(tpM.length-1-i)*TRK_CAD_S, Math.round(tpM[i])]);
+    if(tp.length){
+      const t0 = nowT - (tp.length-1)*TRK_CAD_S;
+      MOVES = MOVES.filter(p=>Array.isArray(p) && p.length===3 && p[0] < t0 && p[0] > nowT-172800);
+      for(let i=0;i<tp.length;i++)
+        MOVES.push([nowT-(tp.length-1-i)*TRK_CAD_S, r5(tp[i][0]), r5(tp[i][1])]);
     } else if(!MOVES.length || MOVES[MOVES.length-1][0] < nowT){
-      MOVES.push([nowT, Math.round(kM)]);
+      MOVES.push([nowT, r5(+kp.lng), r5(+kp.lat)]);
     }
     if(MOVES.length>MOV_CAP) MOVES = MOVES.slice(-MOV_CAP);
     try{ localStorage.setItem(MOV_KEY, JSON.stringify(MOVES)); }catch(e){}
   }
-  // how far back does he stay within STILL_M of where he is now?
+  // how far back does he stay within STILL_M of where he is now? Straight-line displacement
+  // from the newest fix, not a path odometer: an odometer accumulates GPS jitter (two
+  // genuinely stationary fixes at CP3 still carried 51 m chords each) and would fake
+  // movement out of a runner asleep in a hall.
   let stillT = MOVES.length ? MOVES[MOVES.length-1][0] : nowT, sawMove = false;
   if(MOVES.length){
-    const mNow = MOVES[MOVES.length-1][1];
+    const pNow = [MOVES[MOVES.length-1][1], MOVES[MOVES.length-1][2]];   // [lng,lat] — hav()'s order
     for(let i=MOVES.length-2;i>=0;i--){
-      if(Math.abs(mNow-MOVES[i][1]) >= STILL_M){ sawMove = true; break; }
+      if(hav(pNow, [MOVES[i][1], MOVES[i][2]]) >= STILL_M){ sawMove = true; break; }
       stillT = MOVES[i][0];
     }
   }
