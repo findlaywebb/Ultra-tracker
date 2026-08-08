@@ -84,6 +84,15 @@
     font-variant-numeric:tabular-nums;-moz-appearance:textfield}
   .tgtin input:focus{outline:0;border-color:var(--accent)}
   .tgtin input::-webkit-outer-spin-button,.tgtin input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  .etabox .toggle button{padding:5px 8px}
+  @media(max-width:400px){.etabox .toggle button{padding:5px 6px;font-size:11px}}
+  .proj{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+  .proj .v{font-size:22px}
+  .projm{text-align:right;font-variant-numeric:tabular-nums}
+  .projm .rg{font-size:12px;color:var(--dim)}
+  .projm .rt{font-size:11px;color:var(--dim);margin-top:3px;max-width:36ch;line-height:1.45}
+  @media(max-width:560px){.projm{text-align:left}.projm .rt{max-width:none}}
   /* is-he-moving pill (hero) */
   .mvp{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px;font-size:12px;
     background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:5px 12px}
@@ -149,6 +158,16 @@
         <div class="bar"><i id="progBar" style="width:0%"></i></div>
         <div class="barlabels"><span>Portpatrick</span><span id="progPct">0%</span><span>Cockburnspath</span></div>
       </div>
+      <div class="proj">
+        <div class="stat">
+          <div class="v" id="projClock">—</div>
+          <div class="l" id="projLabel">Projected finish · based on 2025</div>
+        </div>
+        <div class="projm">
+          <div class="rg" id="projRange">—</div>
+          <div class="rt" id="projRate"></div>
+        </div>
+      </div>
     </div>
 
     <div class="card col-5">
@@ -169,6 +188,7 @@
             <button data-p="t10" class="on">10 min</button>
             <button data-p="seg">segment</button>
             <button data-p="all">overall</button>
+            <button data-p="y25">2025</button>
           </div>
         </div>
       </div>
@@ -238,6 +258,72 @@ let CRS = {src:null};                        // route/cum/latlngs, memoised on D
 const TGT_KEY = "utrk.targetM";              // canonical METRES from start — unit-independent
 let TGT = NaN;                               // NaN = unset
 try{ TGT = parseFloat(localStorage.getItem(TGT_KEY)); }catch(e){}   // Safari can throw on blocked storage
+// ---- 2025 reference data (race 1162 / course 1939 — identical course, same 06:00 Sat start) ----
+// Mined 2026-08-08 from /races/1162/checkpoint_times + /athletes: 162 starters, 98 finishers.
+// Cleaned: min(time_utc) per (athlete,checkpoint) [80 dupes collapsed], crew excluded [253 rows],
+// "finisher" = has a Finish-checkpoint row. All hours are measured from course.start_time.
+// SCHEMA
+//   n,f : 2025 starters / finishers.
+//   s[] : TRUE (projected) metres at Start,CP1..CP12,Finish — 2026 course_points projection.
+//         2025 and 2026 CP coordinates are byte-identical, so these apply to both years.
+//   c[] : 12 entries, CP1..CP12 (i.e. checkpoint sort 2..13). Each entry:
+//         b : first FINISHER's arrival, in whole minutes after start
+//         e : first DNF's arrival, in whole minutes after start (0 when the stream is empty)
+//         f : finisher stream, arrival-sorted. Per record: varint(arrivalDeltaMinutes) then
+//             2 base64 chars = round(finishHour*60) - 3480   [58 h offset]
+//         d : DNF stream, arrival-sorted. Per record: varint(arrivalDeltaMinutes). No finish value.
+//         varint: base64 digits, each 63 means "+63 and keep reading"; the first digit < 63 ends it.
+//         alphabet: 0-9 A-Z a-z - _  (index = value)
+// Everything else — median curve, percentiles, survival corridor, overall finish spread — is DERIVED
+// from these streams in y25init(); nothing else is baked, so nothing else can drift.
+const Y25={n:162,f:98,
+ s:[0,21510,36480,74430,111490,153460,166110,198480,226010,254890,275530,299470,319620,352870],
+ c:[
+  {b:130,e:122,
+   f:"0WR1IJ0Fc1NY12z04y2HG1Yd1UQ0MK0Wc3T00bx1Q50Ht1CN1Sf0Gd2Jb2K20Wf10J0Q51a_1Ng1Ng06F3PE0Se1Il0Ng1bD1XN0b71Th0b71RD2LT0T_3LL0QZ2Ig0Qw0Ys0NY0Vn1Yd1Vn1Vm0LV1U10XM1QM0Sf0Wf0Xi1Wj1UM0c20QL0Wp1MP1a80N71QM0U21Zv0Wl1Zm1IQ0aE1bw1QZ3Yv07r1XN0aY1Yu0aY1cm1b60ah1aQ0Wl0Yu1R_0a23Kk0UO1W31ZS0aL0IU1a65Yd4bH8Nj3bS",
+   d:"0251221201421152602132021211010131001030110200102101011221313693"},  // CP1: 162 through, 98 finished
+  {b:233,e:219,
+   f:"04y3IJ1NY3WR32z3Fc1Ht3HG1Q51CN0MK0UQ10J2T00bx2Yd0Wc2Gd5Q51Ng0Jb16F0Ng1Wf0K21Sf1Se1PE1NgFIl2Th0b71RD2T_2b73Ig0LT0Ys0bD3LL0QZ1LV0XM1Qw1XN2a_0Wp2NY4MP1IQ0Sf0QM0Xi1Vn1Yd1Vn1U11QZ1Wj2Vm1bw0a81Wf0U21Zv1UM4Wl1c21QL1N70a21QM4Yu0XN0R_1Yu3Yv0aE2aY0aY17r1b62IU0aL3UO1aQ0Wl3cm1Zm0ah1W36bH1Yd0a62KkHZSGbSCNj",
+   d:"03C23354114J121A470273000103112351000010001623101133142226A950OE"},  // CP2: 162 through, 98 finished
+  {b:499,e:484,
+   f:"04yMIJ6Ht62z10JECN3bx06F7MK3Fc1Q50NY2Q50Gd4UQ3Ng1Ng0Yd9PE0WR9T05Se1Jb5HG4K24Sf7Il0IQ6LT1Wf0Wc5Ng7LV9LL3Ys0NY5Qw0T_0RD4Wp1QM2QZ8Sf0Vn1Ig1b70Vn1bw1U13Th3QZAMP4XM1bD1XN4Wf1Wl0Yd2N78Xi1Wj3U20Zv1R_0a21UM0a_7a80XN7b7DaY2aY8a61Yu0QL1b627r0aQ0IU1Yu0c24ah1bH1QM6cm0aL2W30Vm0aEBYd1Yv1KkNWlGbS3UOLZS_5Nj__WZm",
+   d:"0C33K8M294pC33554CE3915210A0117113E10220715331205550H2B63RBF0Q__H9"},  // CP3: 162 through, 98 finished
+  {b:799,e:805,
+   f:"04yiHtI0J72z2MKN6F9CN0IJ1Fc1GdBQ5SNg9K21Q53IQ1NgAYd5JbAbxFHGESe7LT3T0AWR0LVGPE2Sf7Ng0IlBIg7LL3U12Wf1NY0Qw2QM3YsAWc0MPET_8UQ0N70VnKQZCb71b7AQZ4RD5Wj3Zv1R_1XN0Wf1Yd4U24bw7Xi6XM1Wp2bD0UMCUO1NY1XN6aY1aY57r4Yu2Yd3Th1YuAbH0aQ3a20QL2Vm1Wl1Vn2Wl0ahGSf4c23a6BaL1IUWa8DQM1bS3cmDKk4aELYv6a_XZSBW3Mb6__fZmiNj",
+   d:"093s7PRMc-IHB3DRA151I3500742C1BH3061R70PNHR45ID7MH21uo_C0D2"},  // CP4: 156 through, 98 finished
+  {b:1228,e:1267,
+   f:"04yp0J-2z_1Gd66F1Fc2CNXIJ4HtfMK8IQ0HG5Q5kbxHQ5CK22Ng0NgJPEKNgKT09LT6IgMU1JUQ3MP4QwLQZ6NY0LL9Il1NY3QZCLV9Wp3Wf2Wf3Wc4bw7QM6SfCJbBRDCThON74WR8UMJVn0SfDVn7XN1Wl2Ys0T_9YdcZv1Yd4U20bH0XN2R_3XiMYv9XM7Wj2c2Aa62b71b74Wl2aY1a_3aY4UO6Yu4aQ4Vm2Yu4Se5bDAQM1ah17rLaE2W31bS8IU1b6HYd9a82a27QLDcmMKk0aLYZS_XZm",
+   d:"0Mt__4_w1_hMQ_bKdDn27CX03H2B5CLI520FO1k_w____t4"},  // CP5: 134 through, 97 finished
+  {b:1407,e:1503,
+   f:"04yj0J_02z_I6F1FcKCNBGdGIJmHtIIQOQ5THGHNg0PEENgAK21NgGT07MKGLTLbxLQ54Qw1LL2MP7U14Ig2NYbUQHNYQQMVLV9Il8SfIbw0Wf1QZ1Wc4Wp3QZ4N78WfCTh4RDNSf4Vn4XN1Jb0Wl4U21Yd1UMUR_DT_2WR0YsNYd9bH2Yv5Zv1XM9UO3XiHVn2c21Wj0XN1W30Yu4bD3aYGVm4a_0Wl7Se0aY5Yd9Yu5a68QM27r2a25aE6ah2QLFb66b7Mb72aQ5NjJaL1IUkbSHa87ZSCcmAKk__OZm",
+   d:"03___u__74cs0lo7Ys2KR5HP4FLEQD813PFH5__8i"},  // CP6: 132 through, 98 finished
+  {b:1783,e:1513,
+   f:"04y80J_22z__L6FUCNbGdFIJ6FcgHtQIQdPE5K2DHG7Q52MKkNg0Ng2Ng2IgQLT4MP6NY6Q54NY_ET0bU1BIl7LVBN72RD4QZ2QM4LLzWRtbxBJb6Wc4Wf4Wf7bw2Th3YdIT_2Vn3Sf1R_2Wp3U28QZVVn1Yd1UO8Yv1QwxXNBW36XN8XMDc24bH6UM8Wl0Yu7Yu4ZvEaY2Sf4VmCaY4UQDWlOXi_FSe8bD6aQAa8CYs1a_2bSAb73b71ZSEQM4QL7aE7a2KIUIahfYdAWj5b65a6bKk0cmPZmJ7r1aL",
+   d:"0_____0_3p3___u____1RH___P3hPZi__SeI__Y4E"},  // CP7: 118 through, 97 finished
+  {b:2037,e:2008,
+   f:"00JN4y_i2z__56F_SCNWIJ_-Fc1HtFGdBIQzK21HGuIg4LT2PELQ5HQ50MKDMPXNg4Ng5NgbLLGNY_KT0pLVHNY9QZDRD8N71Il2QMAQZyJb4U13Qw7bxPWp4WR7Th7Wc2Vn0bw6SfBWfAUMFU23R_5UQ5SfWYd3XN9UO3Vn7WlET_1Yd8Xi1Wl1XN5YvCSeAVmGbH1ZvMc2RYu5Yu9bDeYs3aL9aY8XMDahAYdQaQ0b79b7DbS1WjAWfEZS2QM3W3RQLga_GZm2a6Na8NaEMb6ka2_M7r_FcmDIU_eKk",
+   d:"0U__oT__________0__c___2K8pQM_M041__Mja"},  // CP8: 115 through, 96 finished
+  {b:2344,e:2616,
+   f:"00J_A4y_Y2z__h6F__fCNpIJRGd__6HtMFc0IQ9HG_hIgFMPWK21PEWLT5MKLQ5DLL4Ng1Ng3NgyQ5HLV1IlFNYTQZ4N7BQZ5aLSJb5RDgU1AQM2NY1T0eSfLWR2QwbTh8U21Vn6bw4R_0Wc6Wf2UQ6bx7T_1UO3UM6YdJSfVYv1YdLVn8VmEW35Xi0WfAWl4XMDYu2Yu7SeFXN1bH5aY47r2Wl4bDPc2ZYd6aYxb71b7GZvXZSRWjLaE2aQKYsIa22a62Zm4bSAahQcm3QL0a80a_XWp4b6CQMtKkeIU",
+   d:"0_____________T101____0A___x__U___E"},  // CP9: 106 through, 96 finished
+  {b:2644,e:3480,
+   f:"00J__v4yx2z_P6F___aCNPIJ__DGdsHtEIQMFc_1IgOHGYMPqLLgK2EIl2NY0Ng2Ng0Ng5Q5DQ5GLVRMK3NY0PEMQZUQZSQM1N7cJbA7r2aLkRD_WT0WU12WpAR_Rbw9LTNQwJThBSf6WRAWl7bxLUQOU22SfHW32Wc2XN7Yd8Wf4Vm3UO9Se2Yv2XN2UMNVn6WfDT_CVn1WlnZv1Xi1Yu3Yu7YdAYsGbS8bD8bH2a2Kc26b71Yd0aY1XM1aY2b7XZS3Zm5aQ1ahCWj-IU2a63a_9a8IcmEQL3QM_wKk__TaE",
+   d:"0013_________________l"},  // CP10: 101 through, 96 finished
+  {b:2949,e:3500,
+   f:"00J__G2z34y_-6F_____eCN__vIQ6IJ2FcIGd5Ht_UIgI7rFaL9HGFIlBK2_qNg8Ng4LL2Q5BLTONY1MKBJbRQM_4LV8NY3Q58NgFRD8QZIPE8QZ_3N7_DT0HU12QwISfCThaWpRSf1R_PUO8U2MVm5IU8bx4Wf1UQ2Yd5Vn2bw0Wc4UM3T_AXN1WllWl2W35XNKYu1YuEYd7XMCYvGVn5KkQaY1aY0Zv9bH4bDBa2Lah6c2EZS9a69Yd1Ys0Xi1aE5bS9Wj1aQ4b67b70b7Ucm3Zm_fQMAa88QL",
+   d:"018"},  // CP11: 95 through, 92 finished
+  {b:3179,e:0,
+   f:"00J_l4y_82z_T6F_____wCN_v7r1aL__6IJ4Fc6HtlGdAIQOHG__6Il_8JbOLT2K2fLL6LVRMKFNYZNgbNYFPE4NgBQ5PQM6IU9QZCQZZWRAQ50N7IQw1RD_2Ig5T0TSfCR_8Sf9ThKUQ4VnHSe8U1nWp6U28UM7UODWfEVn1T_JWcCVm7bxTWl9Wf3XN5bw3W31Xi5YdUYv2QL1QM3Yd2WlAXN9XM6Yu6WjDbD7b72a21ZS4Zv0a63Ys2Yd9aYAbS1ahDaECbHFYu3b63c2CZmIb77a8DaQIa_3cmSKk",
+   d:""}  // CP12: 94 through, 94 finished
+ ]};
+const Y25_AL="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_";
+const Y25_IX={}; for(let i=0;i<64;i++) Y25_IX[Y25_AL[i]]=i;
+const Y25_W=[.25,.5,1,1.5,2,3];        // cohort window ladder, hours (validated: LOO medAE 2.42 h)
+const Y25_MINN=15, Y25_MINF=3, Y25_TINY=10;  // stop widening at n; need nf finishers; flag small samples
+const R_MIN=.55, R_MAX=3;              // ratio guard — never binds (2025 observed range 0.636–1.595)
+const R_MINM=2000, R_MINS=900;         // below 2 km OR 15 min on course the ratio is pinned to 1
+const STALE_MIN=20;                    // fix age above which the 2025 hint mentions it
+let Y25C=null, Y25M=null;              // decoded streams / derived median curve (lazy, once)
 let map, layers = {}, initialised = false;
 
 const H = {headers:{Authorization:"Bearer "+KEY}};
@@ -352,13 +438,57 @@ function syncTgt(force){                          // canonical metres -> input b
 }
 // one ETA engine, two targets. remM = true metres still to run, v = selected pace (m/s).
 function etaFor(remM, v, nowT){
-  if(!isFinite(v)) return {clock:"—", count:"—", hint: PACE==="t10" ? "no recent track data — try segment or overall" : "not enough data yet"};
+  if(!isFinite(v)) return {clock:"—", count:"—", hint: PACE==="t10" ? "no recent track data — try segment or overall"
+                                                    : PACE==="y25" ? "waiting for his first position fix" : "not enough data yet"};
   if(remM<=50)     return {clock:"arriving", count:"now", hint:""};
   if(v<V_MIN)      return {clock:"stopped", count:"—", hint:"no movement in the last 10 min"};
   if(v>V_MAX)      return {clock:"—", count:"—", hint:"implausible pace — likely a tracker gap"};
   const secs=remM/v, at=Math.round(nowT+secs);
   return {clock:`${HHMM(at)}<small> ${DOW(at)} BST</small>`,
           count:`${dur(secs)}<small> @ ${paceStr(paceFromMs(v,1))}</small>`, hint:""};
+}
+
+// ---- 2025 engine ----------------------------------------------------------
+// Decode once. Everything derived here (median curve, percentiles, survival corridor)
+// comes from the streams, so it cannot drift out of sync with them.
+function qs(a,p){ if(!a.length) return NaN; const i=(a.length-1)*p, l=Math.floor(i), h=Math.ceil(i);
+  return l===h ? a[l] : a[l]+(a[h]-a[l])*(i-l); }
+const y25lo = (a,x)=>{ let l=0,h=a.length; while(l<h){ const m=(l+h)>>1; a[m]<x?l=m+1:h=m; } return l; };
+function y25init(){ if(Y25C) return;
+  Y25C = Y25.c.map(o=>{ const a=[],f=[],x=[]; let i=0,p=o.b,c,v;
+    while(i<o.f.length){ v=0; do{ c=Y25_IX[o.f[i++]]; v+=c; }while(c===63); p+=v;
+      a.push(p/60); f.push((Y25_IX[o.f[i]]*64+Y25_IX[o.f[i+1]]+3480)/60); i+=2; }
+    i=0; p=o.e; while(i<o.d.length){ v=0; do{ c=Y25_IX[o.d[i++]]; v+=c; }while(c===63); p+=v; x.push(p/60); }
+    return {a,f,x}; });
+  Y25M=[0]; for(let k=0;k<12;k++) Y25M.push(qs(Y25C[k].a,.5));      // median finisher arrival per CP
+  Y25M.push(qs(Y25C[0].f.slice().sort((m,n)=>m-n),.5));             // …and at the Finish (all 98 have a CP1 row)
+}
+// 2025 median finisher's elapsed HOURS at `m` true metres — linear in distance between CP anchors.
+function med25(m){ y25init(); const A=Y25.s;
+  if(m<=0) return 0;
+  for(let i=1;i<A.length;i++) if(m<=A[i]) return Y25M[i-1]+(Y25M[i]-Y25M[i-1])*(m-A[i-1])/(A[i]-A[i-1]);
+  return Y25M[13]*m/A[13]; }                                        // past the finish: proportional
+// his fitness ratio vs that median at his current position (1.00 = dead on the 2025 median)
+function y25ratio(kM,elapsed){ if(kM<R_MINM||elapsed<R_MINS) return 1;
+  const mc=med25(kM); if(!(mc>0)) return 1;
+  return Math.min(R_MAX,Math.max(R_MIN,(elapsed/3600)/mc)); }
+// effective m/s over the NEXT remM metres, shaped by the 2025 curve and scaled by his ratio.
+// Feeding this to etaFor() reproduces the 2025 seconds exactly and makes the "@ x:xx /km"
+// annotation read as the implied 2025-scaled pace over that stretch. (See D6.)
+function v25(kM,remM,elapsed){
+  if(remM<=50) return 1;                                            // unused — etaFor short-circuits to "arriving"
+  const mc=med25(kM), mt=med25(kM+remM);
+  if(!(mt>mc)) return NaN;
+  return remM/((mt-mc)*3600*y25ratio(kM,elapsed)); }
+// 2025 runners who were at CP k (1..12 = CP1..CP12) within a window of `h` hours after the start.
+function y25cohort(k,h){ y25init(); const o=Y25C[k-1]; let w=0,f=[],n=0;
+  for(const ww of Y25_W){ w=ww;
+    const i0=y25lo(o.a,h-w), i1=y25lo(o.a,h+w);
+    f=o.f.slice(i0,i1).sort((m,q2)=>m-q2);
+    n=(i1-i0)+(y25lo(o.x,h+w)-y25lo(o.x,h-w));
+    if(n>=Y25_MINN) break; }
+  return {w,n,nf:f.length,p25:qs(f,.25),p50:qs(f,.5),p75:qs(f,.75),
+          last:o.a[o.a.length-1]};                                  // last 2025 finisher through this CP
 }
 
 let CACHE = {};
@@ -521,15 +651,21 @@ function render(D){
   cpsOrdered.forEach(c=>{ if(c.start) return; const r=ktimes[c.id];
     if(r && r.time_utc && c._m>=lastM){ lastM=c._m; lastT=r.time_utc; } });
   const vSeg = (kM-lastM)/(nowT-lastT), vAll = kM/elapsed;
-  const v = PACE==="t10" ? v10 : PACE==="seg" ? vSeg : vAll;
+  const v = PACE==="t10" ? v10 : PACE==="seg" ? vSeg : PACE==="all" ? vAll : NaN;
+  // 2025 mode has no single v — pace varies along the remaining course, so each target gets its own.
+  const vAt = remM => PACE==="y25" ? v25(kM,remM,elapsed) : v;
+  const y25Hint = ()=>{ const r=y25ratio(kM,elapsed), p=Math.round(Math.abs(1-r)*100),
+      age=Math.round((Date.now()/1000-nowT)/60);
+    return `paced on 2025's 98 finishers · ${p<2?"level with":p+"% "+(r<1?"ahead of":"behind")} their median here`
+         + (age>STALE_MIN ? ` · last fix ${age} min ago` : " · no live track needed"); };
 
   let etaL="ETA next checkpoint", E={clock:"—",count:"—",hint:""};
   if(!nextCp){ etaL="Course complete"; E.clock="finished"; }
-  else { etaL = `ETA · ${nextCp.name}`; E = etaFor(nextCp._m - kM, v, nowT); }
+  else { const rm = nextCp._m - kM; etaL = `ETA · ${nextCp.name}`; E = etaFor(rm, vAt(rm), nowT); }
   document.getElementById("etaClock").innerHTML = E.clock;
-  document.getElementById("etaCount").innerHTML = E.count;   // was textContent — now carries the <small> pace
+  document.getElementById("etaCount").innerHTML = E.count;
   document.getElementById("etaLabel").textContent = etaL;
-  document.getElementById("etaHint").textContent = E.hint;
+  document.getElementById("etaHint").textContent = E.hint || (PACE==="y25" && nextCp ? y25Hint() : "");
 
   // ---- ETA to the crew's custom point (same pace source as above) ----
   if(isFinite(TGT) && TGT>totalM){ TGT=totalM; saveTgt(); }        // clamp to course end, self-healing
@@ -538,12 +674,49 @@ function render(D){
   if(isFinite(TGT) && TGT>0){
     const remT = TGT - kM;
     tgtL = `ETA · ${distShort(TGT)}`;
-    T = remT < -50 ? {clock:"passed", count:"—", hint:""} : etaFor(remT, v, nowT);
+    T = remT < -50 ? {clock:"passed", count:"—", hint:""} : etaFor(remT, vAt(remT), nowT);
   }
   document.getElementById("tgtClock").innerHTML = T.clock;
   document.getElementById("tgtCount").innerHTML = T.count;
   document.getElementById("tgtLabel").textContent = tgtL;
   document.getElementById("tgtHint").textContent = T.hint===E.hint ? "" : T.hint;   // don't print the same reason twice
+
+  // ---- Projected finish, from the 2025 cohort (independent of PACE mode) ----
+  // Keyed to the last checkpoint he has actually reached: a hard timestamp, so this figure
+  // is stable between checkpoints instead of twitching every 60 s.
+  {
+    const cl = h => `${DOW(start+h*3600)} ${HHMM(start+h*3600)}`;
+    let lastK=0, lastH=NaN;
+    cpsOrdered.forEach(c=>{ const r=ktimes[c.id];                       // ← Spec 3 dependency, see Part Z
+      if(!c.start && r && r.time_utc && c.sort>lastK){ lastK=c.sort; lastH=(r.time_utc-start)/3600; } });
+    let pC="—", pL="Projected finish · based on 2025", pR="—", pT="";
+    if(lastK===14){                                                     // he's done
+      pL="Finished"; pC=`${cl(lastH)}<small> BST</small>`; pR=`${lastH.toFixed(1)} h on course`;
+      pT=`2025: ${Y25.f} of ${Y25.n} starters finished (${Math.round(100*Y25.f/Y25.n)}%)`;
+    } else if(lastK<2){                                                 // before CP1 — whole-field baseline
+      y25init(); const all=Y25C[0].f.slice().sort((a,b)=>a-b);
+      pL="Projected finish · 2025 field"; pC=`${cl(qs(all,.5))}<small> BST</small>`;
+      pR=`likely ${cl(qs(all,.25))} – ${cl(qs(all,.75))}`;
+      pT=`${Y25.n} started in 2025 · ${Y25.f} finished (${Math.round(100*Y25.f/Y25.n)}%). Updates once he reaches CP1.`;
+    } else {
+      const k=lastK-1, co=y25cohort(k,lastH), nm=cpsOrdered.find(c=>c.sort===lastK).name;
+      const mins=Math.round(co.w*60);
+      if(co.nf<Y25_MINF){                                               // outside 2025's survival corridor
+        pL=`Projected finish · beyond 2025's range`;
+        pT=`Only ${co.nf} of ${co.n} runners still at ${nm} this late in 2025 finished — `+
+           `the last one through here came in at ${cl(co.last)}.`;
+      } else {
+        pC=`${cl(co.p50)}<small> BST</small>`;
+        pR=`likely ${cl(co.p25)} – ${cl(co.p75)}`;
+        pT=`${co.n} runners hit ${nm} within ${mins} min of his time in 2025 · `+
+           `${co.nf} finished (${Math.round(100*co.nf/co.n)}%)`+(co.n<Y25_TINY?" · small sample":"");
+      }
+    }
+    document.getElementById("projClock").innerHTML  = pC;
+    document.getElementById("projLabel").textContent= pL;
+    document.getElementById("projRange").textContent= pR;
+    document.getElementById("projRate").textContent = pT;
+  }
 
   // neighbours
   const localFactor = kp && kp.distance>0 ? kM/kp.distance : 1;
