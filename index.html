@@ -84,6 +84,33 @@
     font-variant-numeric:tabular-nums;-moz-appearance:textfield}
   .tgtin input:focus{outline:0;border-color:var(--accent)}
   .tgtin input::-webkit-outer-spin-button,.tgtin input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  /* is-he-moving pill (hero) */
+  .mvp{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px;font-size:12px;
+    background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:5px 12px}
+  .mvp b{font-weight:700;font-size:11px;letter-spacing:.5px;text-transform:uppercase}
+  .mvp .mvd{width:9px;height:9px;border-radius:50%;background:var(--dim);flex:none}
+  .mvp .mvs{color:var(--dim);font-variant-numeric:tabular-nums}
+  .mvp.grn{border-color:rgba(63,185,80,.45)}  .mvp.grn b{color:var(--good)}
+  .mvp.grn .mvd{background:var(--good);animation:pulse 2s infinite}
+  .mvp.stop{border-color:rgba(74,163,255,.45)} .mvp.stop b{color:var(--accent)} .mvp.stop .mvd{background:var(--accent)}
+  .mvp.amb{border-color:rgba(210,153,34,.45)}  .mvp.amb b{color:var(--warn)}   .mvp.amb .mvd{background:var(--warn)}
+  .mvp.red{border-color:rgba(248,81,73,.45)}   .mvp.red b{color:var(--hot)}    .mvp.red .mvd{background:var(--hot)}
+  /* crew access board */
+  .cab{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  @media(max-width:700px){.cab{grid-template-columns:1fr}}
+  .cab .ci{min-width:0;background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--dim);
+    border-radius:10px;padding:10px 12px}
+  .cab .ci.ok{border-left-color:var(--good)} .cab .ci.ess{border-left-color:var(--warn)} .cab .ci.no{border-left-color:var(--hot)}
+  .cab .cn{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .cab .cn b{font-size:15px;font-weight:600}
+  .cab .cd{color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}
+  .cab .cb{display:inline-block;margin-top:7px;padding:2px 8px;border-radius:20px;
+    font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+  .cab .ci.ok  .cb{background:rgba(63,185,80,.15);color:var(--good)}
+  .cab .ci.ess .cb{background:rgba(210,153,34,.18);color:var(--warn)}
+  .cab .ci.no  .cb{background:rgba(248,81,73,.15);color:var(--hot)}
+  .cab .cx{margin-top:5px;font-size:11px;line-height:1.35;color:var(--dim);white-space:normal}
+  .cab .ce{padding:6px 2px;font-size:12px;color:var(--dim)}
 </style>
 </head>
 <body>
@@ -98,7 +125,7 @@
       <button data-u="km" class="on">km / km·h</button>
       <button data-u="mi">mi / mph</button>
     </div>
-    <div class="live"><span class="dot"></span><span id="liveTxt">connecting…</span></div>
+    <div class="live" title="API poll status — not his movement"><span class="dot"></span><span id="liveTxt">connecting…</span></div>
   </header>
 
   <div class="err" id="err"></div>
@@ -110,9 +137,10 @@
         <div style="flex:1">
           <div class="heronm" id="hName">Kester Webb</div>
           <div class="herometa" id="hMeta">—</div>
+          <div class="mvp" id="mvPill"><span class="mvd"></span><b id="mvTxt">—</b><span class="mvs" id="mvSub"></span></div>
           <div class="bigstats">
             <div class="stat"><div class="v" id="sDist">—</div><div class="l">Distance covered</div></div>
-            <div class="stat"><div class="v" id="sSpeed">—</div><div class="l">Current speed</div></div>
+            <div class="stat"><div class="v" id="sPaceNow">—</div><div class="l" id="lPaceNow">Current pace</div></div>
             <div class="stat"><div class="v" id="sPace">—</div><div class="l">Avg pace</div></div>
           </div>
         </div>
@@ -163,6 +191,11 @@
       <div id="nbrs" style="margin-top:12px"></div>
     </div>
 
+    <div class="card col-12">
+      <h2>Crew access · next 3 checkpoints</h2>
+      <div class="cab" id="crewBoard"></div>
+    </div>
+
     <div class="card col-7">
       <h2>Course map</h2>
       <div id="map"></div>
@@ -193,6 +226,15 @@ let PACE = "t10";                      // "t10" | "seg" | "all"
 const TRK_BACK_S = 3600, TRK_FWD_S = 3600;   // request window (wide: skew-proof, indexed from end)
 const TRK_CAD_S  = 300, TRK_PTS = 3;         // ~5 min fix cadence; 3 pts => 600 s baseline
 const V_MIN = 0.15, V_MAX = 6.0;             // m/s plausibility clamp (stopped / bad data)
+const STALE_AMB = 600, STALE_RED = 1800;     // s: latest-fix age -> "tracker quiet" / "no signal"
+const STILL_M = 75, STILL_S = 900;           // stationary = <75 m of course progress over >=15 min
+const MOV_KEY = "utrk.moves", MOV_CAP = 288; // (time,metres) log; 288 * 300 s = 24 h, ~6 KB
+const PRJ_S = 48;                            // project(): route block size (benchmarked optimum)
+let MOVES = [];
+try{ MOVES = JSON.parse(localStorage.getItem(MOV_KEY)) || []; }catch(e){}
+if(!Array.isArray(MOVES)) MOVES = [];
+let PRJ = {route:null};                      // project() block index, memoised on route identity
+let CRS = {src:null};                        // route/cum/latlngs, memoised on D.cpts identity
 const TGT_KEY = "utrk.targetM";              // canonical METRES from start — unit-independent
 let TGT = NaN;                               // NaN = unset
 try{ TGT = parseFloat(localStorage.getItem(TGT_KEY)); }catch(e){}   // Safari can throw on blocked storage
@@ -209,15 +251,35 @@ function hav(a,b){ // [lng,lat]
   const h=Math.sin(dla/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin(dlo/2)**2;
   return 2*R*Math.asin(Math.sqrt(h));
 }
-// nearest index on course polyline to a point, returns {i,dist_m along route}
-function project(pt, route, cum){
-  let best=Infinity, bi=0;
-  for(let i=0;i<route.length;i++){
-    const d=hav(pt,route[i]);
-    if(d<best){best=d;bi=i;}
+// Block index over the route: one sampled vertex per PRJ_S-vertex block, plus bnd[j] =
+// the greatest along-route distance from that sample to either end of its block.
+// Rebuilt only when the route array identity changes (once per poll, not per render).
+function prjIdx(route, cum){
+  if(PRJ.route===route) return PRJ;
+  const n=route.length, mid=[], bnd=[];
+  for(let lo=0; lo<n; lo+=PRJ_S){
+    const hi=Math.min(lo+PRJ_S-1,n-1), m=(lo+hi)>>1;
+    mid.push(m); bnd.push(Math.max(cum[m]-cum[lo], cum[hi]-cum[m]));
   }
-  return cum[bi];
+  return (PRJ={route, mid, bnd, n, dm:new Float64Array(mid.length)});
 }
+// index of the route vertex nearest pt. PROVABLY the same index the naive O(n) scan
+// returns (see spec §3.2): every block is sampled, and a block is skipped only when the
+// triangle inequality proves it cannot hold a vertex at least as close as the best sample.
+function projIdx(pt, route, cum){
+  const X=prjIdx(route,cum), mid=X.mid, bnd=X.bnd, dm=X.dm, n=X.n, nb=mid.length;
+  let best=Infinity;
+  for(let j=0;j<nb;j++){ const d=hav(pt,route[mid[j]]); dm[j]=d; if(d<best) best=d; }
+  let bi=0, bd=Infinity;
+  for(let j=0;j<nb;j++){
+    if(dm[j]-bnd[j] > best) continue;                       // strict: never prunes a tie
+    const lo=j*PRJ_S, hi=Math.min(lo+PRJ_S-1,n-1);
+    for(let i=lo;i<=hi;i++){ const d=hav(pt,route[i]); if(d<bd){bd=d;bi=i;} }
+  }
+  return bi;
+}
+// unchanged signature: nearest point on the course polyline -> TRUE metres along route
+function project(pt, route, cum){ return cum[projIdx(pt,route,cum)]; }
 
 // ---- unit formatting ----
 function dist(m){ // metres -> primary string
@@ -252,6 +314,33 @@ function dur(s){
   if(!isFinite(s)||s<0) return "—";
   const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60);
   return d ? `~${d} d ${h} h` : h ? `~${h} h ${m} m` : m<1 ? "<1 m" : `~${m} m`;
+}
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const cpTxt = s => String(s||"").replace(/\*+/g," ").replace(/\s{2,}/g," ").trim();  // drop ** markers, keep the words
+const mins = s => !isFinite(s)||s<90 ? "<1 min"
+               : s<5400 ? `${Math.round(s/60)} min`
+               : `${Math.floor(s/3600)} h ${Math.round(s%3600/60)} min`;
+// crew access verdict from checkpoints.extra_text. Most restrictive match wins (probe A1:
+// CP2's warning carries no ** markers, so this must read the prose, not the formatting).
+function crewAccess(t){
+  const s = String(t||"");
+  if(/no support crews/i.test(s))      return {k:"no",  lbl:"No crew access"};
+  if(/essential access only/i.test(s)) return {k:"ess", lbl:"Essential access only"};
+  return {k:"ok", lbl:"Crew access"};
+}
+// THE ONE PLACE checkpoint_times is cleaned (FIX-2 + FIX-3).
+// -> {athlete_id:{checkpoint_id:row}} for the WHOLE field: duplicate (athlete,checkpoint)
+// pairs collapsed to min(time_utc), crew:true vehicles and null times dropped.
+// athById is a parameter so the 2025 comparison can clean race 1162 with its own athletes.
+function cleanCT(rows, athById){
+  const by = {};
+  (rows||[]).forEach(r=>{
+    const a = athById[r.athlete_id];
+    if(!a || a.crew || !r.time_utc) return;
+    const m = by[r.athlete_id] || (by[r.athlete_id]={});
+    if(!m[r.checkpoint_id] || r.time_utc < m[r.checkpoint_id].time_utc) m[r.checkpoint_id] = r;
+  });
+  return by;
 }
 const U_M = ()=> UNIT==="km" ? 1000 : 1609.34;    // metres per display unit
 function saveTgt(){ try{ isFinite(TGT)&&TGT>0 ? localStorage.setItem(TGT_KEY,TGT) : localStorage.removeItem(TGT_KEY); }catch(e){} }
@@ -300,11 +389,14 @@ function render(D){
   const athById = Object.fromEntries(D.ath.map(a=>[a.id,a]));
   document.getElementById("raceName").textContent = D.course.name;
 
-  // course polyline + cumulative REAL distance
-  const route = D.cpts.map(p=>[+p.lng,+p.lat]);
-  const cum = [0];
-  for(let i=1;i<route.length;i++) cum[i]=cum[i-1]+hav(route[i-1],route[i]);
-  const totalM = cum[cum.length-1];
+  // course polyline + cumulative REAL distance, memoised on the cpts rows so a toggle-driven
+  // re-render from CACHE rebuilds nothing (and route identity stays stable for prjIdx/Leaflet)
+  if(CRS.src!==D.cpts){
+    const rt=D.cpts.map(p=>[+p.lng,+p.lat]), cm=[0];
+    for(let i=1;i<rt.length;i++) cm[i]=cm[i-1]+hav(rt[i-1],rt[i]);
+    CRS = {src:D.cpts, route:rt, cum:cm, ll:rt.map(p=>[p[1],p[0]])};
+  }
+  const route = CRS.route, cum = CRS.cum, totalM = cum[cum.length-1];
 
   // checkpoint real distances by projecting each onto route
   const cpsOrdered = D.cp.filter(c=>c.on_map).sort((a,b)=>a.sort-b.sort);
@@ -323,18 +415,79 @@ function render(D){
   const kM = kp ? project([kp.lng,kp.lat],route,cum) : 0;
   const nowT = kp ? kp.time : Math.max(...D.pos.map(p=>p.time));
   const elapsed = nowT - start;
-  const ktimes = {}; D.ct.forEach(r=>{ if(r.athlete_id===KESTER) ktimes[r.checkpoint_id]=r; });
+  // FIX-2/FIX-3: deduped, crew-free checkpoint_times for the WHOLE field, in one place.
+  // ctBy is what the 2025-comparison features consume; ktimes keeps its old shape exactly.
+  const ctBy = cleanCT(D.ct, athById);
+  const ktimes = ctBy[KESTER] || {};
+
+  // projected track, computed ONCE and shared by: current pace, the movement indicator,
+  // and the ETA card's 10-min mode. TRUE metres along route, oldest -> newest.
+  const tp  = trackPts(D.trk);
+  const tpM = tp.map(p=>project(p,route,cum));
+  const v10 = tpM.length>=TRK_PTS
+    ? (tpM[tpM.length-1] - tpM[tpM.length-TRK_PTS]) / ((TRK_PTS-1)*TRK_CAD_S)
+    : NaN;
+  // current pace source, in priority order (labelled, never silently substituted)
+  let vNow = v10, vSrc = "· last 10 min";
+  if(!isFinite(vNow) && tpM.length===2){ vNow = (tpM[1]-tpM[0])/TRK_CAD_S; vSrc = "· last 5 min"; }
+  if(!isFinite(vNow) && kp && isFinite(kp.speed_est)){
+    vNow = kp.speed_est * Math.cos(rad(kp.lat));   // de-inflate Mercator by 1/sec(lat); ~1% of truth
+    vSrc = "· tracker estimate";
+  }
 
   // hero
   document.getElementById("hName").textContent = `${a.first_name} ${a.last_name}`;
   document.getElementById("hMeta").innerHTML =
     `${a.country||""} · started ${DOW(start)} ${HHMM(start)} BST · ${(elapsed/3600).toFixed(1)} h on course`;
   document.getElementById("sDist").innerHTML = dist(kM);
-  document.getElementById("sSpeed").innerHTML = kp ? speed(kp.speed_est) : "—";
+  document.getElementById("sPaceNow").innerHTML =
+    !isFinite(vNow) ? "—" : vNow < V_MIN ? "stopped" : paceStr(paceFromMs(vNow,1));
+  document.getElementById("lPaceNow").textContent =
+    "Current pace" + (isFinite(vNow) ? " "+vSrc : "");
   document.getElementById("sPace").innerHTML = paceStr(paceFromMs(kM, elapsed));
   const pct = Math.min(100, kM/totalM*100);
   document.getElementById("progBar").style.width = pct+"%";
   document.getElementById("progPct").textContent = pct.toFixed(1)+"% · "+distShort(totalM-kM)+" to go";
+
+  // ---- is he moving? ---- (about HIM; the header pill is about the API poll)
+  // Movement log: the last hour is re-derived from athlete_track at synthesised times
+  // (newest track point == latest_positions, cadence 300 s +-1%); older entries persist
+  // from earlier renders and survive a reload via localStorage.
+  if(kp){
+    if(tpM.length){
+      const t0 = nowT - (tpM.length-1)*TRK_CAD_S;
+      MOVES = MOVES.filter(p=>Array.isArray(p) && p[0] < t0 && p[0] > nowT-172800);
+      for(let i=0;i<tpM.length;i++) MOVES.push([nowT-(tpM.length-1-i)*TRK_CAD_S, Math.round(tpM[i])]);
+    } else if(!MOVES.length || MOVES[MOVES.length-1][0] < nowT){
+      MOVES.push([nowT, Math.round(kM)]);
+    }
+    if(MOVES.length>MOV_CAP) MOVES = MOVES.slice(-MOV_CAP);
+    try{ localStorage.setItem(MOV_KEY, JSON.stringify(MOVES)); }catch(e){}
+  }
+  // how far back does he stay within STILL_M of where he is now?
+  let stillT = MOVES.length ? MOVES[MOVES.length-1][0] : nowT, sawMove = false;
+  if(MOVES.length){
+    const mNow = MOVES[MOVES.length-1][1];
+    for(let i=MOVES.length-2;i>=0;i--){
+      if(Math.abs(mNow-MOVES[i][1]) >= STILL_M){ sawMove = true; break; }
+      stillT = MOVES[i][0];
+    }
+  }
+  const stillS = Math.max(0, nowT-stillT);
+  const age = kp ? Math.floor(Date.now()/1000) - kp.time : Infinity;
+  let mvK, mvT;
+  if(!kp)                  { mvK="red";  mvT="no position"; }
+  else if(age>STALE_RED)   { mvK="red";  mvT="no signal"; }
+  else if(age>STALE_AMB)   { mvK="amb";  mvT="tracker quiet"; }
+  else if(stillS>=STILL_S) { mvK="stop"; mvT="stopped"; }
+  else                     { mvK="grn";  mvT="moving"; }
+  let mvS = kp ? `last fix ${HHMM(kp.time)} · ${mins(age)} ago` : "waiting for first position";
+  if(kp && mvK==="stop") mvS = "tracker live · " + mvS;
+  if(kp && stillS>=STILL_S)
+    mvS += ` · ${sawMove ? "last moved ≈"+HHMM(stillT)+" · " : ""}stationary ≥ ${mins(stillS)}`;
+  document.getElementById("mvPill").className = "mvp "+mvK;
+  document.getElementById("mvTxt").textContent = mvT;
+  document.getElementById("mvSub").textContent = mvS;
 
   // field position
   document.getElementById("rkOverall").innerHTML = `${rankIdx+1}<small> / ${runners.length}</small>`;
@@ -344,12 +497,26 @@ function render(D){
     ? `<span style="font-size:15px">${nextCp.name}</span><small style="display:block">${distShort(Math.max(0,nextCp._m-kM))} away</small>`
     : "—";
 
+  // ---- crew access board: the next 3 checkpoints, sliced from nextCp so the board's
+  // first card is always exactly what the ETA card is counting down to ----
+  const ci = nextCp ? cpsOrdered.indexOf(nextCp) : -1;
+  const cb = document.getElementById("crewBoard"); cb.innerHTML="";
+  if(ci<0){ cb.innerHTML = `<div class="ce">Course complete — no checkpoints ahead.</div>`; }
+  cpsOrdered.slice(Math.max(0,ci), ci<0?0:ci+3).forEach(c=>{
+    const A = crewAccess(c.extra_text), x = cpTxt(c.extra_text);
+    const d = document.createElement("div");
+    d.className = "ci "+A.k;
+    d.innerHTML =
+      `<div class="cn"><b>${esc(c.name)}</b>`+
+      `<span class="cd">${distShort(Math.max(0,c._m-kM))} away · at ${distShort(c._m)}</span></div>`+
+      `<span class="cb">${A.lbl}</span>`+
+      (x ? `<div class="cx">${esc(x)}</div>` : "");
+    cb.appendChild(d);
+  });
+
   // ---- ETA to next checkpoint ----
-  // speed sources are all TRUE metres/s (projected), never API distance/speed_est (mercator-inflated)
-  const tp = trackPts(D.trk);
-  const v10 = tp.length>=TRK_PTS
-    ? (project(tp[tp.length-1],route,cum) - project(tp[tp.length-TRK_PTS],route,cum)) / ((TRK_PTS-1)*TRK_CAD_S)
-    : NaN;
+  // speed sources are all TRUE metres/s (projected), never API distance/speed_est (mercator-inflated).
+  // v10 / tp / tpM are computed once, up with the track projection (see above).
   let lastM=0, lastT=start;   // last checkpoint departed — mirrors the splits in-progress row
   cpsOrdered.forEach(c=>{ if(c.start) return; const r=ktimes[c.id];
     if(r && r.time_utc && c._m>=lastM){ lastM=c._m; lastT=r.time_utc; } });
@@ -430,12 +597,12 @@ function render(D){
   CACHE=D;   // cache before the (decorative) map so a map hiccup never blanks the stats
 
   // map — isolated so a Leaflet/tile failure can't break the dashboard
-  try { drawMap(route, cpsOrdered, runners, athById, kp, localFactor); }
+  try { drawMap(route, cum, cpsOrdered, runners, athById, kp, localFactor); }
   catch(e){ console.warn("map draw skipped:", e.message); }
 }
 
-function drawMap(route, cps, runners, athById, kp, localFactor){
-  const latlngs = route.map(p=>[p[1],p[0]]);
+function drawMap(route, cum, cps, runners, athById, kp, localFactor){
+  const latlngs = CRS.ll;                       // memoised with route/cum (Edit 8)
   if(!initialised){
     map = L.map("map",{zoomControl:true,attributionControl:false});
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{maxZoom:19,subdomains:"abcd"}).addTo(map);
@@ -445,23 +612,25 @@ function drawMap(route, cps, runners, athById, kp, localFactor){
     layers.others = L.layerGroup().addTo(map);
     layers.me     = L.circleMarker([0,0],{radius:8,color:"#1a0e04",weight:2,fillColor:"#ff8c42",fillOpacity:1}).addTo(map);
     map.fitBounds(latlngs);
+    layers.src = CRS.src;
     initialised=true;
-  } else {
-    layers.course.setLatLngs(latlngs);
+  } else if(layers.src!==CRS.src){               // only when the course rows actually changed
+    layers.course.setLatLngs(latlngs); layers.src = CRS.src;
   }
-  // done portion of course up to Kester (by nearest index)
+  // done portion of course up to Kester (nearest index — same fast index as project())
   if(kp){
-    let bi=0,best=Infinity;
-    for(let i=0;i<route.length;i++){const d=hav([kp.lng,kp.lat],route[i]); if(d<best){best=d;bi=i;}}
+    const bi = projIdx([kp.lng,kp.lat],route,cum);
     layers.done.setLatLngs(latlngs.slice(0,bi+1));
     layers.me.setLatLng([kp.lat,kp.lng]);
-    layers.me.bindTooltip(`Kester · ${athById[KESTER].first_name} ${athById[KESTER].last_name}`,{permanent:false});
+    layers.me.bindTooltip(`Kester · ${esc(athById[KESTER].first_name)} ${esc(athById[KESTER].last_name)}`,{permanent:false});
   }
-  // checkpoints
+  // checkpoints — full extra_text, ** markers stripped (was split("*")[0], which deleted
+  // exactly the two crew-access warnings the crew needs)
   layers.cps.clearLayers();
   cps.forEach(c=>{
+    const x = cpTxt(c.extra_text);
     L.circleMarker([c.lat,c.lng],{radius:4,color:"#c9d4e0",weight:1.5,fillColor:"#161b22",fillOpacity:1})
-      .bindTooltip(`${c.name}${c.extra_text?" · "+c.extra_text.split("*")[0].trim():""}`,{direction:"top"})
+      .bindTooltip(`${esc(c.name)}${x?" · "+esc(x):""}`,{direction:"top"})
       .addTo(layers.cps);
   });
   // a few runners around Kester
