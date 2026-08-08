@@ -153,6 +153,27 @@
   .spk svg{display:block;width:100%;height:auto}
   .spkhd{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:4px}
   .spktx{font-size:11px;color:var(--dim);margin-top:5px;line-height:1.5}
+  /* map distance marks + long-press popup */
+  #map{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+  .mhint{font-weight:500;font-size:11px;text-transform:none;letter-spacing:0;color:var(--dim)}
+  .kmk{background:rgba(13,17,23,.74);border:1px solid #33445c;border-radius:5px;color:#9fb2c8;
+    font:600 10px/12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    letter-spacing:.3px;text-align:center;white-space:nowrap;pointer-events:none;
+    box-shadow:0 1px 3px rgba(0,0,0,.55)}
+  .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--panel2);color:var(--txt);
+    box-shadow:0 8px 24px rgba(0,0,0,.55)}
+  .leaflet-popup-content-wrapper{border:1px solid var(--line);border-radius:10px}
+  .leaflet-popup-content{margin:10px 26px 10px 12px;font-size:13px;line-height:1.35;
+    -webkit-user-select:text;user-select:text}
+  .leaflet-container a.leaflet-popup-close-button{width:26px;height:26px;font:16px/26px Tahoma,sans-serif;color:var(--dim)}
+  .leaflet-container a.leaflet-popup-close-button:hover{color:var(--txt)}
+  .mpop b{display:block;font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+  .mpop b small{font-size:12px;font-weight:500;color:var(--dim)}
+  .mpop .ms{display:block;margin-top:2px;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .mpop .mw{display:block;margin-top:3px;font-size:12px;color:var(--warn);line-height:1.3}
+  .mpop button{margin-top:9px;width:100%;min-height:34px;padding:8px 10px;border:0;border-radius:8px;
+    background:var(--accent);color:#04121f;font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+  .mpop button:active{filter:brightness(.9)}
 </style>
 </head>
 <body>
@@ -255,7 +276,7 @@
     </div>
 
     <div class="card col-7">
-      <h2>Course map</h2>
+      <h2>Course map <span class="mhint" id="mapHint">· long-press for distance</span></h2>
       <div id="map"></div>
     </div>
 
@@ -308,6 +329,12 @@ try{ MOVES = JSON.parse(localStorage.getItem(MOV_KEY)) || []; }catch(e){}
 if(!Array.isArray(MOVES)) MOVES = [];
 let PRJ = {route:null};                      // project() block index, memoised on route identity
 let CRS = {src:null};                        // route/cum/latlngs, memoised on D.cpts identity
+const MK_LAD = [1,2,5,10,25,50,100];         // distance-mark ladder, in the DISPLAY unit
+const MK_PX  = 55;                           // min px between marks -> picks the step for the zoom
+const MK_OFF = 2000;                         // m: past this, a tap is reported as off the course
+let MKC = {};                                // {"km|5":[[lat,lng,label],…]} — one O(n) walk per (unit,step)
+let MKS = "";                                // signature of the marks currently on the map
+let ME_M = NaN;                              // Kester's TRUE course metres, mirrored for the popup
 const TGT_KEY = "utrk.targetM";              // canonical METRES from start — unit-independent
 let TGT = NaN;                               // NaN = unset
 try{ TGT = parseFloat(localStorage.getItem(TGT_KEY)); }catch(e){}   // Safari can throw on blocked storage
@@ -427,6 +454,27 @@ function projIdx(pt, route, cum){
 }
 // unchanged signature: nearest point on the course polyline -> TRUE metres along route
 function project(pt, route, cum){ return cum[projIdx(pt,route,cum)]; }
+
+// Nearest point ON the polyline, not merely on a vertex: start from projIdx's provably-exact
+// nearest vertex, then refine across its two incident segments in a local flat frame.
+// Never worse than the vertex (the vertex is the seed and only a strictly closer point replaces
+// it); measured exact on taps within 60 m of the line. ~8 us/call — one call per long-press.
+// -> {m: TRUE metres along the course, d: metres from pt to that point, ll:[lat,lng] of it}
+function projSnap(pt, route, cum){
+  const bi=projIdx(pt,route,cum), K=Math.PI*R/180, c=Math.cos(rad(pt[1]));
+  let bm=cum[bi], bd=hav(pt,route[bi]), qlng=route[bi][0], qlat=route[bi][1];
+  for(let k=0;k<2;k++){
+    const i=bi-1+k; if(i<0 || i+1>=route.length) continue;
+    const ax=(route[i][0]-pt[0])*K*c,   ay=(route[i][1]-pt[1])*K,
+          bx=(route[i+1][0]-pt[0])*K*c, by=(route[i+1][1]-pt[1])*K,
+          dx=bx-ax, dy=by-ay, L2=dx*dx+dy*dy;
+    if(!L2) continue;
+    let t=-(ax*dx+ay*dy)/L2; t=t<0?0:t>1?1:t;
+    const qx=ax+t*dx, qy=ay+t*dy, d=Math.sqrt(qx*qx+qy*qy);
+    if(d<bd){ bd=d; bm=cum[i]+t*(cum[i+1]-cum[i]); qlng=pt[0]+qx/(K*c); qlat=pt[1]+qy/K; }
+  }
+  return {m:bm, d:bd, ll:[qlat,qlng]};        // ll is [lat,lng] — Leaflet order, NOT route order
+}
 
 // ---- unit formatting ----
 function dist(m){ // metres -> primary string
@@ -1107,25 +1155,101 @@ function drawSpark(){
     RCTX.gB>=0 ? `behind ${distShort(RCTX.gB)}`    : null].filter(Boolean).join(" · ");
 }
 
+// Whole-unit distance marks. Interpolated ALONG the containing segment: nearest-vertex placement
+// is up to 481 m out on this course (max vertex gap 1023 m), interpolation is exact to 0.01 m.
+// One O(n) walk per (unit, step), then cached — never per render.
+function mkMarks(stepU){
+  const key=UNIT+"|"+stepU, hit=MKC[key]; if(hit) return hit;
+  const rt=CRS.route, cm=CRS.cum, tot=cm[cm.length-1], sm=stepU*U_M(), out=[];
+  let i=1;
+  for(let n=1; n*sm<=tot; n++){
+    const t=n*sm;
+    while(i<cm.length-1 && cm[i]<t) i++;              // monotone walk: O(n) for the whole set
+    const f=(t-cm[i-1])/((cm[i]-cm[i-1])||1);
+    out.push([ rt[i-1][1]+f*(rt[i][1]-rt[i-1][1]),
+               rt[i-1][0]+f*(rt[i][0]-rt[i-1][0]), n*stepU ]);
+  }
+  return (MKC[key]=out);
+}
+// Pick the step from the live scale, cull to the viewport, and rebuild ONLY when the visible set
+// actually changes. Called from moveend (covers zoom and pan) and from the unit toggle. Never from render().
+function kmMarks(force){
+  if(!map || !layers.km) return;                      // before the first drawMap: nothing to do
+  if(force){ MKC={}; MKS=""; }
+  const mh=document.getElementById("mapHint");
+  if(mh) mh.textContent = `· ${UNIT} marks · long-press for distance`;
+  const y=map.getSize().y/2;                          // metres per pixel, straight from the CRS
+  const mpp=map.distance(map.containerPointToLatLng([0,y]), map.containerPointToLatLng([64,y]))/64;
+  const need=MK_PX*mpp/U_M();
+  const stepU=MK_LAD.find(s=>s>=need) || MK_LAD[MK_LAD.length-1];
+  const b=map.getBounds().pad(.25);
+  const vis=mkMarks(stepU).filter(m=>b.contains([m[0],m[1]]));
+  const sig=stepU+"@"+vis.map(m=>m[2]).join(",");
+  if(sig===MKS) return;                               // same marks already drawn — no churn, no flicker
+  MKS=sig;
+  layers.km.clearLayers();
+  vis.forEach(m=>L.marker([m[0],m[1]],{
+      icon:L.divIcon({className:"kmk", html:String(m[2]), iconSize:[30,14], iconAnchor:[15,7]}),
+      interactive:false, keyboard:false
+    }).addTo(layers.km));
+}
+// Long-press / route-tap popup. Content is a DOM node (Leaflet accepts HTMLElement), so the
+// button gets a real listener — no inline onclick, no global. Only internally generated numbers
+// reach innerHTML here; no API string does, so there is nothing to esc().
+function mapPopup(latlng){
+  if(!CRS.route) return;
+  const s=projSnap([latlng.lng, latlng.lat], CRS.route, CRS.cum);   // NOTE the [lng,lat] order
+  const gap=s.m-ME_M;
+  const rel = !isFinite(ME_M) ? "his position isn't known yet"
+            : Math.abs(gap)<50 ? "level with him"
+            : gap>0 ? `${distShort(gap)} ahead of him`
+                    : `${distShort(-gap)} behind him`;
+  const el=document.createElement("div"); el.className="mpop";
+  el.innerHTML = `<b>${dist(s.m)}</b><span class="ms">${rel}</span>` +
+    (s.d>MK_OFF ? `<span class="mw">tap was ${distShort(s.d)} off the course — this is the nearest point on it</span>` : "");
+  const btn=document.createElement("button");
+  btn.textContent = `Set ETA target · ${distShort(s.m)}`;
+  btn.addEventListener("click",()=>{
+    TGT = Math.max(1, Math.round(s.m));               // canonical METRES; 0 reads as "cleared"
+    saveTgt(); syncTgt(true);
+    map.closePopup();
+    if(CACHE.course) render(CACHE);                   // the same path the three toggles use
+    document.getElementById("tgtClock").scrollIntoView({behavior:"smooth",block:"center"});
+  });
+  el.appendChild(btn);
+  L.popup({maxWidth:240, autoPanPadding:[20,20]}).setLatLng(s.ll).setContent(el).openOn(map);
+}
+
 function drawMap(route, cum, cps, runners, athById, kp, localFactor){
   const latlngs = CRS.ll;                       // memoised with route/cum (Edit 8)
   if(!initialised){
-    map = L.map("map",{zoomControl:true,attributionControl:false});
+    map = L.map("map",{zoomControl:true,attributionControl:false,tapHold:true});
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{maxZoom:19,subdomains:"abcd"}).addTo(map);
     layers.course = L.polyline(latlngs,{color:"#3a4b63",weight:3}).addTo(map);
     layers.done   = L.polyline([],{color:"#ff8c42",weight:4}).addTo(map);
+    layers.hit    = L.polyline(latlngs,{color:"#000",weight:20,opacity:0}).addTo(map);  // fat tap target
+    layers.km     = L.layerGroup().addTo(map);
     layers.cps    = L.layerGroup().addTo(map);
     layers.others = L.layerGroup().addTo(map);
     layers.me     = L.circleMarker([0,0],{radius:8,color:"#1a0e04",weight:2,fillColor:"#ff8c42",fillOpacity:1}).addTo(map);
     map.fitBounds(latlngs);
+    let lastPress=0;                             // some devices fire native AND simulated contextmenu
+    map.on("contextmenu",e=>{                    // long-press on iOS (Leaflet TapHold) / right-click
+      const t=Date.now(); if(t-lastPress<400) return; lastPress=t; mapPopup(e.latlng);
+    });
+    layers.hit.on("click",e=>mapPopup(e.latlng));// tapping the route itself
+    map.on("moveend",()=>kmMarks(false));        // covers zoom and pan; self-guarded, usually a no-op
     layers.src = CRS.src;
     initialised=true;
+    kmMarks(false);                              // fitBounds ran before the listener was attached
   } else if(layers.src!==CRS.src){               // only when the course rows actually changed
-    layers.course.setLatLngs(latlngs); layers.src = CRS.src;
+    layers.course.setLatLngs(latlngs); layers.hit.setLatLngs(latlngs); layers.src = CRS.src;
+    kmMarks(true);                               // new geometry -> drop the cache and redraw
   }
   // done portion of course up to Kester (nearest index — same fast index as project())
   if(kp){
     const bi = projIdx([kp.lng,kp.lat],route,cum);
+    ME_M = cum[bi];                             // == render()'s kM, mirrored for the long-press popup
     layers.done.setLatLngs(latlngs.slice(0,bi+1));
     layers.me.setLatLng([kp.lat,kp.lng]);
     layers.me.bindTooltip(`Kester · ${esc(athById[KESTER].first_name)} ${esc(athById[KESTER].last_name)}`,{permanent:false});
@@ -1156,6 +1280,8 @@ document.getElementById("unitToggle").addEventListener("click",e=>{
   const b=e.target.closest("button"); if(!b)return;
   UNIT=b.dataset.u;
   syncTgt(true);                        // re-display the same metres in the new unit
+  try{ if(map) map.closePopup(); kmMarks(true); }   // marks in the new unit; open popups are stale
+  catch(err){ console.warn("km marks skipped:", err.message); }
   document.querySelectorAll("#unitToggle button").forEach(x=>x.classList.toggle("on",x===b));
   if(CACHE.course) render(CACHE);
 });
