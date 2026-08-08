@@ -71,6 +71,11 @@
   .foot{color:var(--dim);font-size:11px;text-align:center;margin:22px 0 8px;line-height:1.6}
   .err{background:rgba(248,81,73,.12);border:1px solid var(--hot);color:#ffb4af;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:12px;display:none}
   .cpdot{background:#fff;border:2px solid #333;border-radius:50%;width:10px;height:10px}
+  .etabox{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+  .etacd{font-size:15px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .etabox .toggle button{padding:5px 9px}
+  .etahint{font-size:11px;color:var(--dim);margin-top:4px}
 </style>
 </head>
 <body>
@@ -117,6 +122,21 @@
         <div class="stat"><div class="v" id="rkGender">—</div><div class="l">Male</div></div>
         <div class="stat"><div class="v" id="rkNext">—</div><div class="l">Next checkpoint</div></div>
       </div>
+      <div class="etabox">
+        <div class="stat">
+          <div class="v" id="etaClock">—</div>
+          <div class="l" id="etaLabel">ETA next checkpoint</div>
+        </div>
+        <div style="text-align:right">
+          <div class="etacd" id="etaCount">—</div>
+          <div class="toggle" id="paceToggle" style="margin-top:6px">
+            <button data-p="t10" class="on">10 min</button>
+            <button data-p="seg">segment</button>
+            <button data-p="all">overall</button>
+          </div>
+        </div>
+      </div>
+      <div class="etahint" id="etaHint"></div>
       <div id="nbrs" style="margin-top:12px"></div>
     </div>
 
@@ -146,6 +166,10 @@ const KEY   = "issmAXFLJmQHpuX-e4f94FRVEDwKrgDYT8z9EVdhEwPaUdcJ";
 const RACE  = 1274, COURSE = 1992, KESTER = 148782;
 const REFRESH_MS = 60000;
 let UNIT = "km";                       // "km" | "mi"
+let PACE = "t10";                      // "t10" | "seg" | "all"
+const TRK_BACK_S = 3600, TRK_FWD_S = 3600;   // request window (wide: skew-proof, indexed from end)
+const TRK_CAD_S  = 300, TRK_PTS = 3;         // ~5 min fix cadence; 3 pts => 600 s baseline
+const V_MIN = 0.15, V_MAX = 6.0;             // m/s plausibility clamp (stopped / bad data)
 let map, layers = {}, initialised = false;
 
 const H = {headers:{Authorization:"Bearer "+KEY}};
@@ -191,18 +215,33 @@ function paceFromMs(distM,secs){ // -> seconds per current unit
 const HHMM = t=>new Date((t+3600)*1000).toISOString().slice(11,16); // BST (UTC+1)
 const DOW  = t=>["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date((t+3600)*1000).getUTCDay()];
 
+// athlete_track -> [[lng,lat],…] oldest→newest; endpoint returns a bare array whose
+// single row holds a JSON *string* GeoJSON LineString, and carries no timestamps.
+function trackPts(trk){
+  try{ const s = trk && trk[0] && trk[0].track; if(!s) return [];
+       return JSON.parse(s).coordinates.map(c=>[+c[0],+c[1]]); }
+  catch(e){ return []; }
+}
+function dur(s){
+  if(!isFinite(s)||s<0) return "—";
+  const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60);
+  return d ? `~${d} d ${h} h` : h ? `~${h} h ${m} m` : m<1 ? "<1 m" : `~${m} m`;
+}
+
 let CACHE = {};
 
 async function load(){
   try{
-    const [ath,cp,ct,pos,crs,cpts] = await Promise.all([
+    const tN = Math.floor(Date.now()/1000);
+    const [ath,cp,ct,pos,crs,cpts,trk] = await Promise.all([
       get("athletes"), get("checkpoints"),
       get(`checkpoint_times?course_ids%5B%5D=${COURSE}&race_start_time_utc=`),
       get(`latest_positions?course_ids%5B%5D=${COURSE}&start_time_utc=0&end_time_utc=9999999999&table=positions`),
-      get("courses"), get(`course_points?course_id=${COURSE}`)
+      get("courses"), get(`course_points?course_id=${COURSE}`),
+      get(`athlete_track?athlete_id=${KESTER}&start_time_utc=${tN-TRK_BACK_S}&end_time_utc=${tN+TRK_FWD_S}`).catch(()=>null)
     ]);
     document.getElementById("err").style.display="none";
-    render({ath:ath.rows, cp:cp.rows, ct:ct.rows, pos:pos.rows, course:crs.rows[0], cpts:cpts.rows});
+    render({ath:ath.rows, cp:cp.rows, ct:ct.rows, pos:pos.rows, course:crs.rows[0], cpts:cpts.rows, trk});
     document.getElementById("liveTxt").textContent = "live · updated "+HHMM(Math.floor(Date.now()/1000))+" BST";
   }catch(e){
     const el=document.getElementById("err");
@@ -240,6 +279,7 @@ function render(D){
   const kM = kp ? project([kp.lng,kp.lat],route,cum) : 0;
   const nowT = kp ? kp.time : Math.max(...D.pos.map(p=>p.time));
   const elapsed = nowT - start;
+  const ktimes = {}; D.ct.forEach(r=>{ if(r.athlete_id===KESTER) ktimes[r.checkpoint_id]=r; });
 
   // hero
   document.getElementById("hName").textContent = `${a.first_name} ${a.last_name}`;
@@ -260,6 +300,38 @@ function render(D){
     ? `<span style="font-size:15px">${nextCp.name}</span><small style="display:block">${distShort(Math.max(0,nextCp._m-kM))} away</small>`
     : "—";
 
+  // ---- ETA to next checkpoint ----
+  // speed sources are all TRUE metres/s (projected), never API distance/speed_est (mercator-inflated)
+  const tp = trackPts(D.trk);
+  const v10 = tp.length>=TRK_PTS
+    ? (project(tp[tp.length-1],route,cum) - project(tp[tp.length-TRK_PTS],route,cum)) / ((TRK_PTS-1)*TRK_CAD_S)
+    : NaN;
+  let lastM=0, lastT=start;   // last checkpoint departed — mirrors the splits in-progress row
+  cpsOrdered.forEach(c=>{ if(c.start) return; const r=ktimes[c.id];
+    if(r && r.time_utc && c._m>=lastM){ lastM=c._m; lastT=r.time_utc; } });
+  const vSeg = (kM-lastM)/(nowT-lastT), vAll = kM/elapsed;
+  const v = PACE==="t10" ? v10 : PACE==="seg" ? vSeg : vAll;
+
+  const remM = nextCp ? nextCp._m - kM : NaN;
+  let etaC="—", etaN="—", etaL="ETA next checkpoint", etaH="";
+  if(!nextCp){ etaL="Course complete"; etaC="finished"; }
+  else {
+    etaL = `ETA · ${nextCp.name}`;
+    if(!isFinite(v)){ etaH = PACE==="t10" ? "no recent track data — try segment or overall" : "not enough data yet"; }
+    else if(remM<=50){ etaC="arriving"; etaN="now"; }
+    else if(v<V_MIN){ etaC="stopped"; etaH="no movement in the last 10 min"; }
+    else if(v>V_MAX){ etaH="implausible pace — likely a tracker gap"; }
+    else {
+      const secs=remM/v, at=Math.round(nowT+secs);
+      etaC = `${HHMM(at)}<small> ${DOW(at)} BST</small>`;
+      etaN = dur(secs);
+    }
+  }
+  document.getElementById("etaClock").innerHTML = etaC;
+  document.getElementById("etaCount").textContent = etaN;
+  document.getElementById("etaLabel").textContent = etaL;
+  document.getElementById("etaHint").textContent = etaH;
+
   // neighbours
   const localFactor = kp && kp.distance>0 ? kM/kp.distance : 1;
   const nb = document.getElementById("nbrs"); nb.innerHTML="";
@@ -274,7 +346,6 @@ function render(D){
   }
 
   // splits with per-segment pace (real distances)
-  const ktimes = {}; D.ct.forEach(r=>{ if(r.athlete_id===KESTER) ktimes[r.checkpoint_id]=r; });
   const tb=document.querySelector("#splits tbody"); tb.innerHTML="";
   let prevT=start, prevM=0, lastDoneM=0;
   const rows=[{name:"Start",_m:0,id:"start",start:true},...cpsOrdered.filter(c=>!c.start)];
@@ -364,6 +435,13 @@ document.getElementById("unitToggle").addEventListener("click",e=>{
   const b=e.target.closest("button"); if(!b)return;
   UNIT=b.dataset.u;
   document.querySelectorAll("#unitToggle button").forEach(x=>x.classList.toggle("on",x===b));
+  if(CACHE.course) render(CACHE);
+});
+
+document.getElementById("paceToggle").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b)return;
+  PACE=b.dataset.p;
+  document.querySelectorAll("#paceToggle button").forEach(x=>x.classList.toggle("on",x===b));
   if(CACHE.course) render(CACHE);
 });
 
