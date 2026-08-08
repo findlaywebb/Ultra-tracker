@@ -76,6 +76,14 @@
   .etacd{font-size:15px;color:var(--dim);font-variant-numeric:tabular-nums}
   .etabox .toggle button{padding:5px 9px}
   .etahint{font-size:11px;color:var(--dim);margin-top:4px}
+  .etacd small{font-size:12px} .etacd small small{font-size:inherit}
+  .etabox.tgt{margin-top:10px;padding-top:10px}
+  .tgtin{margin-top:6px;display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--dim)}
+  .tgtin input{width:66px;background:var(--panel2);color:var(--txt);border:1px solid var(--line);
+    border-radius:8px;padding:5px 7px;font:inherit;font-size:12px;text-align:right;
+    font-variant-numeric:tabular-nums;-moz-appearance:textfield}
+  .tgtin input:focus{outline:0;border-color:var(--accent)}
+  .tgtin input::-webkit-outer-spin-button,.tgtin input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 </style>
 </head>
 <body>
@@ -137,6 +145,21 @@
         </div>
       </div>
       <div class="etahint" id="etaHint"></div>
+      <div class="etabox tgt">
+        <div class="stat">
+          <div class="v" id="tgtClock">—</div>
+          <div class="l" id="tgtLabel">ETA · custom point</div>
+        </div>
+        <div style="text-align:right">
+          <div class="etacd" id="tgtCount">—</div>
+          <div class="tgtin">
+            <input id="tgtIn" type="number" inputmode="decimal" step="0.1" min="0"
+                   placeholder="dist" aria-label="Crew waypoint distance from start">
+            <span id="tgtUnit">km</span>
+          </div>
+        </div>
+      </div>
+      <div class="etahint" id="tgtHint"></div>
       <div id="nbrs" style="margin-top:12px"></div>
     </div>
 
@@ -170,6 +193,9 @@ let PACE = "t10";                      // "t10" | "seg" | "all"
 const TRK_BACK_S = 3600, TRK_FWD_S = 3600;   // request window (wide: skew-proof, indexed from end)
 const TRK_CAD_S  = 300, TRK_PTS = 3;         // ~5 min fix cadence; 3 pts => 600 s baseline
 const V_MIN = 0.15, V_MAX = 6.0;             // m/s plausibility clamp (stopped / bad data)
+const TGT_KEY = "utrk.targetM";              // canonical METRES from start — unit-independent
+let TGT = NaN;                               // NaN = unset
+try{ TGT = parseFloat(localStorage.getItem(TGT_KEY)); }catch(e){}   // Safari can throw on blocked storage
 let map, layers = {}, initialised = false;
 
 const H = {headers:{Authorization:"Bearer "+KEY}};
@@ -226,6 +252,24 @@ function dur(s){
   if(!isFinite(s)||s<0) return "—";
   const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60);
   return d ? `~${d} d ${h} h` : h ? `~${h} h ${m} m` : m<1 ? "<1 m" : `~${m} m`;
+}
+const U_M = ()=> UNIT==="km" ? 1000 : 1609.34;    // metres per display unit
+function saveTgt(){ try{ isFinite(TGT)&&TGT>0 ? localStorage.setItem(TGT_KEY,TGT) : localStorage.removeItem(TGT_KEY); }catch(e){} }
+function syncTgt(force){                          // canonical metres -> input box, in the current unit
+  const el=document.getElementById("tgtIn"); if(!el) return;
+  document.getElementById("tgtUnit").textContent = UNIT;
+  if(!force && document.activeElement===el) return;             // don't clobber mid-typing on the 60 s refresh
+  el.value = isFinite(TGT)&&TGT>0 ? +(TGT/U_M()).toFixed(2) : "";
+}
+// one ETA engine, two targets. remM = true metres still to run, v = selected pace (m/s).
+function etaFor(remM, v, nowT){
+  if(!isFinite(v)) return {clock:"—", count:"—", hint: PACE==="t10" ? "no recent track data — try segment or overall" : "not enough data yet"};
+  if(remM<=50)     return {clock:"arriving", count:"now", hint:""};
+  if(v<V_MIN)      return {clock:"stopped", count:"—", hint:"no movement in the last 10 min"};
+  if(v>V_MAX)      return {clock:"—", count:"—", hint:"implausible pace — likely a tracker gap"};
+  const secs=remM/v, at=Math.round(nowT+secs);
+  return {clock:`${HHMM(at)}<small> ${DOW(at)} BST</small>`,
+          count:`${dur(secs)}<small> @ ${paceStr(paceFromMs(v,1))}</small>`, hint:""};
 }
 
 let CACHE = {};
@@ -312,25 +356,27 @@ function render(D){
   const vSeg = (kM-lastM)/(nowT-lastT), vAll = kM/elapsed;
   const v = PACE==="t10" ? v10 : PACE==="seg" ? vSeg : vAll;
 
-  const remM = nextCp ? nextCp._m - kM : NaN;
-  let etaC="—", etaN="—", etaL="ETA next checkpoint", etaH="";
-  if(!nextCp){ etaL="Course complete"; etaC="finished"; }
-  else {
-    etaL = `ETA · ${nextCp.name}`;
-    if(!isFinite(v)){ etaH = PACE==="t10" ? "no recent track data — try segment or overall" : "not enough data yet"; }
-    else if(remM<=50){ etaC="arriving"; etaN="now"; }
-    else if(v<V_MIN){ etaC="stopped"; etaH="no movement in the last 10 min"; }
-    else if(v>V_MAX){ etaH="implausible pace — likely a tracker gap"; }
-    else {
-      const secs=remM/v, at=Math.round(nowT+secs);
-      etaC = `${HHMM(at)}<small> ${DOW(at)} BST</small>`;
-      etaN = dur(secs);
-    }
-  }
-  document.getElementById("etaClock").innerHTML = etaC;
-  document.getElementById("etaCount").textContent = etaN;
+  let etaL="ETA next checkpoint", E={clock:"—",count:"—",hint:""};
+  if(!nextCp){ etaL="Course complete"; E.clock="finished"; }
+  else { etaL = `ETA · ${nextCp.name}`; E = etaFor(nextCp._m - kM, v, nowT); }
+  document.getElementById("etaClock").innerHTML = E.clock;
+  document.getElementById("etaCount").innerHTML = E.count;   // was textContent — now carries the <small> pace
   document.getElementById("etaLabel").textContent = etaL;
-  document.getElementById("etaHint").textContent = etaH;
+  document.getElementById("etaHint").textContent = E.hint;
+
+  // ---- ETA to the crew's custom point (same pace source as above) ----
+  if(isFinite(TGT) && TGT>totalM){ TGT=totalM; saveTgt(); }        // clamp to course end, self-healing
+  syncTgt();
+  let tgtL="ETA · custom point", T={clock:"—",count:"—",hint:""};
+  if(isFinite(TGT) && TGT>0){
+    const remT = TGT - kM;
+    tgtL = `ETA · ${distShort(TGT)}`;
+    T = remT < -50 ? {clock:"passed", count:"—", hint:""} : etaFor(remT, v, nowT);
+  }
+  document.getElementById("tgtClock").innerHTML = T.clock;
+  document.getElementById("tgtCount").innerHTML = T.count;
+  document.getElementById("tgtLabel").textContent = tgtL;
+  document.getElementById("tgtHint").textContent = T.hint===E.hint ? "" : T.hint;   // don't print the same reason twice
 
   // neighbours
   const localFactor = kp && kp.distance>0 ? kM/kp.distance : 1;
@@ -434,6 +480,7 @@ function drawMap(route, cps, runners, athById, kp, localFactor){
 document.getElementById("unitToggle").addEventListener("click",e=>{
   const b=e.target.closest("button"); if(!b)return;
   UNIT=b.dataset.u;
+  syncTgt(true);                        // re-display the same metres in the new unit
   document.querySelectorAll("#unitToggle button").forEach(x=>x.classList.toggle("on",x===b));
   if(CACHE.course) render(CACHE);
 });
@@ -444,6 +491,16 @@ document.getElementById("paceToggle").addEventListener("click",e=>{
   document.querySelectorAll("#paceToggle button").forEach(x=>x.classList.toggle("on",x===b));
   if(CACHE.course) render(CACHE);
 });
+
+const tgtEl = document.getElementById("tgtIn");
+tgtEl.addEventListener("change",e=>{
+  const n = parseFloat(e.target.value);
+  TGT = (isFinite(n) && n>0) ? n*U_M() : NaN;    // blank / 0 / negative / junk => cleared
+  saveTgt(); syncTgt(true);
+  if(CACHE.course) render(CACHE);
+});
+tgtEl.addEventListener("keydown",e=>{ if(e.key==="Enter") e.target.blur(); });   // iOS: commit + dismiss keypad
+syncTgt(true);                                                                   // paint stored target before first fetch
 
 load();
 setInterval(load, REFRESH_MS);
