@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Kester Webb · Race Across Scotland 2026</title>
+<title>Race Across Scotland 2026</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
   :root{
@@ -174,13 +174,49 @@
   .mpop button{margin-top:9px;width:100%;min-height:34px;padding:8px 10px;border:0;border-radius:8px;
     background:var(--accent);color:#04121f;font:inherit;font-size:12px;font-weight:700;cursor:pointer}
   .mpop button:active{filter:brightness(.9)}
+  /* ---- Spec 8: athlete selector ---- */
+  .athbtn{display:inline-flex;align-items:baseline;gap:6px;background:0;border:0;padding:0;margin:0;
+    color:inherit;font:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent}
+  .athbtn:active{opacity:.65}
+  .athbtn .cv{font-size:11px;color:var(--dim)}
+  .dnfb{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:20px;vertical-align:2px;
+    font-size:10px;font-weight:700;letter-spacing:.5px;background:rgba(248,81,73,.16);color:var(--hot)}
+  .pick{position:fixed;inset:0;z-index:900;background:rgba(4,8,14,.66);overscroll-behavior:contain;
+    display:flex;align-items:flex-end;justify-content:center}
+  .pick[hidden]{display:none}
+  @media(min-width:700px){.pick{align-items:center}}
+  .pkbx{width:100%;max-width:460px;max-height:82vh;display:flex;flex-direction:column;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px 14px 0 0;
+    padding:12px 12px calc(12px + env(safe-area-inset-bottom))}
+  @media(min-width:700px){.pkbx{border-radius:14px}}
+  .pkhd{display:flex;gap:8px;align-items:center}
+  #pkIn{flex:1;min-width:0;background:var(--panel2);color:var(--txt);border:1px solid var(--line);
+    border-radius:10px;padding:11px 12px;font:inherit;font-size:16px;-webkit-appearance:none}
+  #pkIn:focus{outline:0;border-color:var(--accent)}
+  .pkx{flex:none;min-width:44px;min-height:44px;background:var(--panel2);color:var(--dim);
+    border:1px solid var(--line);border-radius:10px;font:inherit;font-size:15px;cursor:pointer}
+  .pkls{margin-top:10px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .pkr{display:flex;align-items:center;gap:10px;width:100%;min-height:46px;padding:8px 6px;
+    background:0;border:0;border-bottom:1px solid var(--line);color:var(--txt);
+    font:inherit;font-size:14px;text-align:left;cursor:pointer}
+  .pkr:last-child{border-bottom:0}
+  .pkr:active{background:var(--panel2)}
+  .pkr.on{background:rgba(255,140,66,.10)} .pkr.on .pkn{color:var(--kester);font-weight:600}
+  .pkb{flex:none;min-width:38px;text-align:right;color:var(--dim);font-variant-numeric:tabular-nums}
+  .pkn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pkm{flex:none;color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}
+  .pkd{flex:none;padding:1px 7px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.5px;
+    background:rgba(248,81,73,.16);color:var(--hot)}
+  .pke{padding:14px 6px;color:var(--dim);font-size:13px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <div>
-      <h1>Kester Webb <span class="sub">· bib 180</span></h1>
+      <h1><button class="athbtn" id="athBtn" type="button" aria-haspopup="dialog"
+            title="Tap to track a different runner"><span id="athName">Loading runner…</span>
+            <span class="sub" id="athBib">·</span><span class="cv">▾</span></button></h1>
       <div class="sub" id="raceName">Race Across Scotland 215</div>
     </div>
     <div class="spacer"></div>
@@ -188,21 +224,31 @@
       <button data-u="km" class="on">km / km·h</button>
       <button data-u="mi">mi / mph</button>
     </div>
-    <div class="live" title="API poll status — not his movement"><span class="dot"></span><span id="liveTxt">connecting…</span></div>
+    <div class="live" title="API poll status — not the runner's movement"><span class="dot"></span><span id="liveTxt">connecting…</span></div>
   </header>
+  <div class="pick" id="pick" hidden>
+    <div class="pkbx" role="dialog" aria-modal="true" aria-label="Choose runner">
+      <div class="pkhd">
+        <input id="pkIn" type="search" autocomplete="off" autocorrect="off" autocapitalize="off"
+               spellcheck="false" placeholder="name or bib…" aria-label="Search runners by name or bib">
+        <button class="pkx" id="pkX" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="pkls" id="pkLs"></div>
+    </div>
+  </div>
 
   <div class="err" id="err"></div>
 
   <div class="grid">
     <div class="card col-7">
       <div class="hero">
-        <div class="bib"><small>BIB</small><b>180</b></div>
+        <div class="bib"><small>BIB</small><b id="hBib">—</b></div>
         <div style="flex:1">
-          <div class="heronm" id="hName">Kester Webb</div>
+          <div class="heronm"><span id="hName">—</span><span class="dnfb" id="hDnf" style="display:none">DNF</span></div>
           <div class="herometa" id="hMeta">—</div>
           <div class="mvp" id="mvPill"><span class="mvd"></span><b id="mvTxt">—</b><span class="mvs" id="mvSub"></span></div>
           <div class="bigstats">
-            <div class="stat"><div class="v" id="sDist">—</div><div class="l">Distance covered</div></div>
+            <div class="stat"><div class="v" id="sDist">—</div><div class="l" id="lDist">Distance covered</div></div>
             <div class="stat"><div class="v" id="sPaceNow">—</div><div class="l" id="lPaceNow">Current pace</div></div>
             <div class="stat"><div class="v" id="sPace">—</div><div class="l">Avg pace</div></div>
           </div>
@@ -228,7 +274,7 @@
       <h2>Field position</h2>
       <div class="bigstats" style="margin-top:0">
         <div class="stat"><div class="v" id="rkOverall">—</div><div class="l">Overall</div></div>
-        <div class="stat"><div class="v" id="rkGender">—</div><div class="l">Male</div></div>
+        <div class="stat"><div class="v" id="rkGender">—</div><div class="l" id="lGender">Male</div></div>
         <div class="stat"><div class="v" id="rkNext">—</div><div class="l">Next checkpoint</div></div>
       </div>
       <div class="etabox">
@@ -313,7 +359,47 @@
 <script>
 const API   = "https://racetracker-rails-production.onrender.com/api/v1";
 const KEY   = "issmAXFLJmQHpuX-e4f94FRVEDwKrgDYT8z9EVdhEwPaUdcJ";
-const RACE  = 1274, COURSE = 1992, KESTER = 148782;
+const RACE  = 1274, COURSE = 1992;
+// ---- who this dashboard is pointed at (Spec 8) ----------------------------
+// Was `const KESTER = 148782`. Now a module var, persisted so a reload keeps the crew's
+// choice. `n`/`b` in the stored blob are a PAINT HINT only — the id is the only truth, and
+// an id that isn't in this race's athletes payload is healed in render(), never fatal.
+const ATH_DEF = 148782, ATH_KEY = "utrk.athlete", ATH_KEEP = 5;
+const RACE_NM = "Race Across Scotland 2026";   // <title> suffix; course.name reads "…215"
+let ATH = ATH_DEF, ATH_HINT = null;
+try{ const h = JSON.parse(localStorage.getItem(ATH_KEY));
+     if(h && typeof h==="object" && +h.id>0){ ATH = +h.id; ATH_HINT = h; }
+     else if(+h>0) ATH = +h;                   // tolerate a bare id from an older build
+}catch(e){}
+let MOV_KEY, MS_KEY, SNAP_KEY;                 // all three are PER ATHLETE; set by athKeys()
+function athKeys(){ MOV_KEY = "utrk.moves2."+ATH;
+                    MS_KEY   = "utrk.ms."+RACE+"."+ATH;
+                    SNAP_KEY = "utrk.snaps."+RACE+"."+ATH; }
+function saveAth(a){ try{ localStorage.setItem(ATH_KEY, JSON.stringify(
+     {id:ATH, n:a?`${a.first_name} ${a.last_name}`:null, b:a?a.bib:null})); }catch(e){} }
+function movLoad(){ let m=[]; try{ m = JSON.parse(localStorage.getItem(MOV_KEY)) || []; }catch(e){}
+                    return Array.isArray(m) ? m : []; }
+// one-time: adopt the pre-Spec-8 unsuffixed keys as the DEFAULT athlete's, then drop them.
+function athMigrate(){ try{
+    [["utrk.moves2","utrk.moves2."+ATH_DEF],
+     ["utrk.ms."+RACE,   "utrk.ms."+RACE+"."+ATH_DEF],
+     ["utrk.snaps."+RACE,"utrk.snaps."+RACE+"."+ATH_DEF]].forEach(([o,n])=>{
+       const v = localStorage.getItem(o); if(v==null) return;
+       if(localStorage.getItem(n)==null) localStorage.setItem(n,v);
+       localStorage.removeItem(o); });
+  }catch(e){} }
+// keep history for at most ATH_KEEP athletes (~13 KB each), MRU order, current first
+function athGC(){ try{
+    let r=[]; try{ r = JSON.parse(localStorage.getItem("utrk.recent")) || []; }catch(e){}
+    if(!Array.isArray(r)) r=[];
+    r = [ATH, ...r.filter(x=>+x!==ATH)].slice(0,ATH_KEEP);
+    localStorage.setItem("utrk.recent", JSON.stringify(r));
+    const keep = new Set(r.map(String));
+    for(let i=localStorage.length-1;i>=0;i--){
+      const k = localStorage.key(i)||"", m = /^utrk\.(?:moves2|ms\.\d+|snaps\.\d+)\.(\d+)$/.exec(k);
+      if(m && !keep.has(m[1])) localStorage.removeItem(k); }
+  }catch(e){} }
+athMigrate(); athKeys(); athGC();
 const REFRESH_MS = 60000;
 let UNIT = "km";                       // "km" | "mi"
 let PACE = "t10";                      // "t10" | "seg" | "all"
@@ -323,13 +409,13 @@ const V_MIN = 0.15, V_MAX = 6.0;             // m/s plausibility clamp (stopped 
 const PRJ_TOL = 150;                         // m: slack on the chord bound for GPS noise + polyline sampling
 const STALE_AMB = 600, STALE_RED = 1800;     // s: latest-fix age -> "tracker quiet" / "no signal"
 const STILL_M = 75, STILL_S = 900;           // stationary = <75 m of course progress over >=15 min
-// (time,lng,lat) log; 288 * 300 s = 24 h, ~9 KB. Key bumped from "utrk.moves": the old log
-// held projected COURSE metres, which the shape check below silently discards on first load.
-const MOV_KEY = "utrk.moves2", MOV_CAP = 288;
+// (time,lng,lat) log; 288 * 300 s = 24 h, ~9 KB. Key bumped from "utrk.moves" (that log held
+// projected COURSE metres, discarded by the shape check), then SUFFIXED with the athlete id in
+// Spec 8: a log carried across a switch would report the new runner stationary on the old one's
+// fixes. See athKeys(); the shape/age filters below are unchanged.
+const MOV_CAP = 288;
 const PRJ_S = 48;                            // project(): route block size (benchmarked optimum)
-let MOVES = [];
-try{ MOVES = JSON.parse(localStorage.getItem(MOV_KEY)) || []; }catch(e){}
-if(!Array.isArray(MOVES)) MOVES = [];
+let MOVES = movLoad();
 let PRJ = {route:null};                      // project() block index, memoised on route identity
 let CRS = {src:null};                        // route/cum/latlngs, memoised on D.cpts identity
 const MK_LAD = [1,2,5,10,25,50,100];         // distance-mark ladder, in the DISPLAY unit
@@ -337,7 +423,8 @@ const MK_PX  = 55;                           // min px between marks -> picks th
 const MK_OFF = 2000;                         // m: past this, a tap is reported as off the course
 let MKC = {};                                // {"km|5":[[lat,lng,label],…]} — one O(n) walk per (unit,step)
 let MKS = "";                                // signature of the marks currently on the map
-let ME_M = NaN;                              // Kester's TRUE course metres, mirrored for the popup
+let ME_M = NaN;                              // selected runner's TRUE course metres, for the popup
+let ME_FN = "the runner", ME_NM = "";        // first / full name, set by paintIdent() each render
 const TGT_KEY = "utrk.targetM";              // canonical METRES from start — unit-independent
 let TGT = NaN;                               // NaN = unset
 try{ TGT = parseFloat(localStorage.getItem(TGT_KEY)); }catch(e){}   // Safari can throw on blocked storage
@@ -411,8 +498,8 @@ let Y25C=null, Y25M=null;              // decoded streams / derived median curve
 const SUN_Z   = 96;                          // 96 = civil twilight (chosen); 90.833 = plain sunset
 const MID_LAT = 55.4, MID_LNG = -3.5;        // course-midpoint fallback for the sun maths
 const PROF_BUCKETS = 240;                    // 6347 course points -> ~600 path points
-const MS_KEY   = "utrk.ms."+RACE;            // milestone first-seen times
-const SNAP_KEY = "utrk.snaps."+RACE;         // DERIVED rank records only — never raw payloads
+// MS_KEY / SNAP_KEY now live in the Spec 8 ATH block (per-athlete, set by athKeys()).
+// Milestone first-seen times; DERIVED rank records only — never raw payloads.
 const SNAP_STEP = 3600, SNAP_CONC = 4, SNAP_MAX_FETCH = 24, SNAP_V = 1;
 const M_FT = 3.28084;
 let map, layers = {}, initialised = false;
@@ -632,7 +719,15 @@ function y25cohort(k,h){ y25init(); const o=Y25C[k-1]; let w=0,f=[],n=0;
 
 let CACHE = {};
 
+let LOAD_AT = 0;                       // ms of the last load() start — bounds switch-triggered fetches
+function loadNow(){                    // a switch is a user action equal to first page load, but
+  const t = Date.now();                // never more than one extra fetch per 3 s however fast they tap
+  if(t - LOAD_AT < 3000) return;
+  load();
+}
 async function load(){
+  LOAD_AT = Date.now();
+  const forA = ATH;                    // the athlete THIS payload is for
   try{
     const tN = Math.floor(Date.now()/1000);
     const [ath,cp,ct,pos,crs,cpts,trk] = await Promise.all([
@@ -640,8 +735,10 @@ async function load(){
       get(`checkpoint_times?course_ids%5B%5D=${COURSE}&race_start_time_utc=`),
       get(`latest_positions?course_ids%5B%5D=${COURSE}&start_time_utc=0&end_time_utc=9999999999&table=positions`),
       get("courses"), get(`course_points?course_id=${COURSE}`),
-      get(`athlete_track?athlete_id=${KESTER}&start_time_utc=${tN-TRK_BACK_S}&end_time_utc=${tN+TRK_FWD_S}`).catch(()=>null)
+      get(`athlete_track?athlete_id=${forA}&start_time_utc=${tN-TRK_BACK_S}&end_time_utc=${tN+TRK_FWD_S}`).catch(()=>null)
     ]);
+    if(ATH !== forA) return;           // a switch landed mid-flight: this trk is the OLD runner's,
+                                       // and the switch already fired its own load(). Drop it whole.
     document.getElementById("err").style.display="none";
     render({ath:ath.rows, cp:cp.rows, ct:ct.rows, pos:pos.rows, course:crs.rows[0], cpts:cpts.rows, trk});
     document.getElementById("liveTxt").textContent = "live · updated "+HHMM(Math.floor(Date.now()/1000))+" BST";
@@ -673,15 +770,26 @@ function render(D){
   cpsOrdered.forEach(c=>{ c._m = project([c.lng,c.lat],route,cum); });
 
   // ranking by (mercator) distance among non-crew runners — monotonic so rank is exact
+  // Spec 8: resolve WHO before anything reads ATH. A stored id from another race (or a hand-edited
+  // one) must degrade to the default, not blank the dashboard on `a.first_name` of undefined.
+  let a = athById[ATH];
+  if(!a){ const f = athById[ATH_DEF] || D.ath.find(x=>!x.crew);
+          if(f) adopt(f); a = athById[ATH]; }
+  if(!a){ const el=document.getElementById("err"); el.style.display="block";
+          el.textContent="No runners in this race payload."; return; }
+  paintIdent(a);                                   // title, header, hero name/bib, gender label
+  const DNF  = !!a.did_not_finish;                 // null for most rows, true once withdrawn
+  const dnfT = DNF ? Math.floor(Date.parse(a.did_not_finish_time||"")/1000) : NaN;
+
   const runners = D.pos.filter(p=>athById[p.athlete_id] && !athById[p.athlete_id].crew)
                        .sort((a,b)=>b.distance-a.distance);
-  const rankIdx = runners.findIndex(p=>p.athlete_id===KESTER);
+  const rankIdx = runners.findIndex(p=>p.athlete_id===ATH);
   const kp = runners[rankIdx];
-  const males = runners.filter(p=>athById[p.athlete_id].gender==="M");
-  const gRank = males.findIndex(p=>p.athlete_id===KESTER)+1;
-  const a = athById[KESTER];
+  // gender rank follows the SELECTED runner's gender (payload uses "M"/"F"; null is guarded)
+  const peers = a.gender ? runners.filter(p=>athById[p.athlete_id].gender===a.gender) : [];
+  const gRank = peers.findIndex(p=>p.athlete_id===ATH)+1;
 
-  // Kester real distance covered = project current position onto route
+  // selected runner's real distance covered = project current position onto route
   const kM = kp ? project([kp.lng,kp.lat],route,cum) : 0;
   const nowT = kp ? kp.time : Math.max(...D.pos.map(p=>p.time));
   if(kp){ SUN_LAT = +kp.lat; SUN_LNG = +kp.lng; }     // sun maths follows him up the course
@@ -689,7 +797,7 @@ function render(D){
   // FIX-2/FIX-3: deduped, crew-free checkpoint_times for the WHOLE field, in one place.
   // ctBy is what the 2025-comparison features consume; ktimes keeps its old shape exactly.
   const ctBy = cleanCT(D.ct, athById);
-  const ktimes = ctBy[KESTER] || {};
+  const ktimes = ctBy[ATH] || {};
 
   // projected track, computed ONCE and shared by: current pace, the movement indicator,
   // and the ETA card's 10-min mode. TRUE metres along route, oldest -> newest.
@@ -722,10 +830,13 @@ function render(D){
   }
 
   // hero
-  document.getElementById("hName").textContent = `${a.first_name} ${a.last_name}`;
+  // (name/bib/title are painted by paintIdent() above — exactly one writer)
+  document.getElementById("hDnf").style.display = DNF ? "inline-block" : "none";
   document.getElementById("hMeta").innerHTML =
-    `${a.country||""} · started ${DOW(start)} ${HHMM(start)} BST · ${(elapsed/3600).toFixed(1)} h on course`;
+    `${a.country||""} · started ${DOW(start)} ${HHMM(start)} BST · ${(elapsed/3600).toFixed(1)} h on course`
+    + (DNF ? ` · <span style="color:var(--hot)">withdrew${isFinite(dnfT)?" "+DOW(dnfT)+" "+HHMM(dnfT):""}</span>` : "");
   document.getElementById("sDist").innerHTML = dist(kM);
+  document.getElementById("lDist").textContent = DNF ? "Final distance" : "Distance covered";
   document.getElementById("sPaceNow").innerHTML =
     !isFinite(vNow) ? "—" : vNow < V_MIN ? "stopped" : paceStr(paceFromMs(vNow,1));
   document.getElementById("lPaceNow").textContent =
@@ -733,7 +844,8 @@ function render(D){
   document.getElementById("sPace").innerHTML = paceStr(paceFromMs(kM, elapsed));
   const pct = Math.min(100, kM/totalM*100);
   document.getElementById("progBar").style.width = pct+"%";
-  document.getElementById("progPct").textContent = pct.toFixed(1)+"% · "+distShort(totalM-kM)+" to go";
+  document.getElementById("progPct").textContent =
+    pct.toFixed(1)+"% · "+(DNF ? "withdrew here" : distShort(totalM-kM)+" to go");
 
   // ---- is he moving? ---- (about HIM; the header pill is about the API poll)
   // Movement log: the last hour is re-derived from athlete_track at synthesised times
@@ -773,12 +885,17 @@ function render(D){
   const stillS = Math.max(0, nowT-stillT);
   const age = kp ? Math.floor(Date.now()/1000) - kp.time : Infinity;
   let mvK, mvT;
-  if(!kp)                  { mvK="red";  mvT="no position"; }
+  // Spec 8: withdrawal outranks freshness. spec3 D/17 orders freshness BEFORE stillness because the
+  // tracker cannot tell a stopped runner from a dead battery; a DNF flag is not an inference at all,
+  // it is the organiser saying he is off the course, so it goes first and the rest is unchanged.
+  if(DNF)                  { mvK="red";  mvT="withdrawn"; }
+  else if(!kp)             { mvK="red";  mvT="no position"; }
   else if(age>STALE_RED)   { mvK="red";  mvT="no signal"; }
   else if(age>STALE_AMB)   { mvK="amb";  mvT="tracker quiet"; }
   else if(stillS>=STILL_S) { mvK="stop"; mvT="stopped"; }
   else                     { mvK="grn";  mvT="moving"; }
   let mvS = kp ? `last fix ${HHMM(kp.time)} · ${mins(age)} ago` : "waiting for first position";
+  if(DNF) mvS = (isFinite(dnfT) ? `withdrew ${DOW(dnfT)} ${HHMM(dnfT)} · ` : "") + mvS;
   if(kp && mvK==="stop") mvS = "tracker live · " + mvS;
   if(kp && stillS>=STILL_S)
     mvS += ` · ${sawMove ? "last moved ≈"+HHMM(stillT)+" · " : ""}stationary ≥ ${mins(stillS)}`;
@@ -788,7 +905,8 @@ function render(D){
 
   // field position
   document.getElementById("rkOverall").innerHTML = `${rankIdx+1}<small> / ${runners.length}</small>`;
-  document.getElementById("rkGender").innerHTML  = `${gRank}<small> / ${males.length}</small>`;
+  document.getElementById("rkGender").innerHTML  =
+    peers.length ? `${gRank}<small> / ${peers.length}</small>` : "—";
   const nextCp = cpsOrdered.find(c=>c._m > kM - 300);
   document.getElementById("rkNext").innerHTML = nextCp
     ? `<span style="font-size:15px">${nextCp.name}</span><small style="display:block">${distShort(Math.max(0,nextCp._m-kM))} away</small>`
@@ -827,7 +945,10 @@ function render(D){
          + (age>STALE_MIN ? ` · last fix ${age} min ago` : " · no live track needed"); };
 
   let etaL="ETA next checkpoint", E={clock:"—",count:"—",hint:""};
-  if(!nextCp){ etaL="Course complete"; E.clock="finished"; }
+  if(DNF){ etaL="No ETA · withdrawn";                       // etaFor() is NOT called (spec3 D/1)
+           E = {clock:"—", count:"—",
+                hint:`withdrew${isFinite(dnfT)?" "+DOW(dnfT)+" "+HHMM(dnfT):""} — no projection`}; }
+  else if(!nextCp){ etaL="Course complete"; E.clock="finished"; }
   else { const rm = nextCp._m - kM; etaL = `ETA · ${nextCp.name}`; E = etaFor(rm, vAt(rm), nowT); }
   document.getElementById("etaClock").innerHTML = E.clock;
   document.getElementById("etaCount").innerHTML = E.count;
@@ -840,8 +961,9 @@ function render(D){
   let tgtL="ETA · custom point", T={clock:"—",count:"—",hint:""};
   if(isFinite(TGT) && TGT>0){
     const remT = TGT - kM;
-    tgtL = `ETA · ${distShort(TGT)}`;
-    T = remT < -50 ? {clock:"passed", count:"—", hint:""} : etaFor(remT, vAt(remT), nowT);
+    tgtL = `ETA · ${distShort(TGT)}`;                        // the target itself is unchanged by a switch
+    T = DNF ? {clock:"—", count:"—", hint:""}                // reason already given in the card above
+      : remT < -50 ? {clock:"passed", count:"—", hint:""} : etaFor(remT, vAt(remT), nowT);
   }
   document.getElementById("tgtClock").innerHTML = T.clock;
   document.getElementById("tgtCount").innerHTML = T.count;
@@ -857,7 +979,12 @@ function render(D){
     cpsOrdered.forEach(c=>{ const r=ktimes[c.id];                       // ← Spec 3 dependency, see Part Z
       if(!c.start && r && r.time_utc && c.sort>lastK){ lastK=c.sort; lastH=(r.time_utc-start)/3600; } });
     let pC="—", pL="Projected finish · based on 2025", pR="—", pT="";
-    if(lastK===14){                                                     // he's done
+    if(DNF && lastK!==14){                                              // withdrawn: state the fact
+      pL="Withdrew"; pC=`${distShort(kM)}<small> reached</small>`;
+      pR=`${(elapsed/3600).toFixed(1)} h on course`;
+      pT=isFinite(dnfT) ? `Recorded as a DNF at ${HHMM(dnfT)} ${DOW(dnfT)} BST.`
+                        : "Recorded as a DNF by the organisers.";
+    } else if(lastK===14){                                              // he's done
       pL="Finished"; pC=`${cl(lastH)}<small> BST</small>`; pR=`${lastH.toFixed(1)} h on course`;
       pT=`2025: ${Y25.f} of ${Y25.n} starters finished (${Math.round(100*Y25.f/Y25.n)}%)`;
     } else if(lastK<2){                                                 // before CP1 — whole-field baseline
@@ -888,12 +1015,15 @@ function render(D){
   // neighbours
   const localFactor = kp && kp.distance>0 ? kM/kp.distance : 1;
   const nb = document.getElementById("nbrs"); nb.innerHTML="";
-  for(let i=Math.max(0,rankIdx-3); i<=Math.min(runners.length-1,rankIdx+3); i++){
+  // kp was guaranteed while the page tracked one known-started runner; any runner is now selectable,
+  // including one with no position row at all — the loop below dereferences kp.distance.
+  if(!kp) nb.innerHTML = `<div class="nbr"><div class="nm">no position for this runner yet</div></div>`;
+  for(let i=kp?Math.max(0,rankIdx-3):0; kp && i<=Math.min(runners.length-1,rankIdx+3); i++){
     const p=runners[i], ai=athById[p.athlete_id];
     const gapM=(p.distance-kp.distance)*localFactor;
     const gap = i===rankIdx ? "" : (gapM>=0?"+":"−")+distShort(Math.abs(gapM));
     const row=document.createElement("div");
-    row.className="nbr"+(p.athlete_id===KESTER?" me":"");
+    row.className="nbr"+(p.athlete_id===ATH?" me":"");
     row.innerHTML=`<div class="rk">${i+1}</div><div class="nm">${ai.first_name} ${ai.last_name} <span style="color:var(--dim)">·${ai.bib}</span></div><div class="gap">${gap}</div>`;
     nb.appendChild(row);
   }
@@ -929,7 +1059,7 @@ function render(D){
     const bandT = c.start ? null
       : (rec && rec.time_utc) ? rec.time_utc
       : tr.classList.contains("current") ? nowT
-      : (isFinite(v) && v>=V_MIN && v<=V_MAX) ? nowT + (c._m-kM)/v
+      : (!DNF && isFinite(v) && v>=V_MIN && v<=V_MAX) ? nowT + (c._m-kM)/v
       : null;
     if(bandT!==null && isDark(bandT, +c.lat, +c.lng)){
       tr.classList.add("night");
@@ -952,9 +1082,9 @@ function render(D){
     if(!PROF || PROF.totalM!==totalM) buildProfile(D, cum, cpsOrdered, totalM);   // once per data load
     drawProfile(kM);
     drawMilestones(cpsOrdered, totalM, ktimes, kM, nowT, start);
-    RCTX = {route, cum, athById, start, nowT, rank:rankIdx+1, n:runners.length,
-      gA: rankIdx>0 ? Math.round(Math.abs(runners[rankIdx-1].distance-kp.distance)*localFactor) : -1,
-      gB: rankIdx<runners.length-1
+    RCTX = {route, cum, athById, start, nowT, rank:kp?rankIdx+1:0, n:runners.length,
+      gA: kp && rankIdx>0 ? Math.round(Math.abs(runners[rankIdx-1].distance-kp.distance)*localFactor) : -1,
+      gB: kp && rankIdx<runners.length-1
             ? Math.round(Math.abs(runners[rankIdx+1].distance-kp.distance)*localFactor) : -1};
     drawSpark();                        // pure redraw from cache — no network here, ever
   }catch(e){ console.warn("spec5 panels skipped:", e.message); }
@@ -1053,10 +1183,10 @@ function msDefs(cps, totalM){
 function msSentence(x, t, totalM, start){
   const togo = distShort(Math.max(0, totalM - x.m));
   if(x.cp && x.cp.finish && t)
-    return `Kester FINISHED the Race Across Scotland at ${HHMM(t)} ${DOW(t)} — `+
+    return `${ME_NM} FINISHED the Race Across Scotland at ${HHMM(t)} ${DOW(t)} — `+
            `${distShort(totalM)} in ${((t-start)/3600).toFixed(1)} h! 🏁`;
-  if(!t) return `Kester has ${x.verb} ${x.sn} — ${togo} to go! 🏃`;
-  return `Kester ${x.verb} ${x.sn} at ${HHMM(t)} ${DOW(t)}, `+
+  if(!t) return `${ME_FN} has ${x.verb} ${x.sn} — ${togo} to go! 🏃`;
+  return `${ME_FN} ${x.verb} ${x.sn} at ${HHMM(t)} ${DOW(t)}, `+
          `${Math.round((t-start)/3600)} h in — ${togo} to go! 🏃`;
 }
 function drawMilestones(cps, totalM, ktimes, kM, nowT, start){
@@ -1088,7 +1218,7 @@ function drawMilestones(cps, totalM, ktimes, kM, nowT, start){
     `<div class="msr up"><span class="mi">·</span><span class="mn">${x.name}</span>`+
     `<span class="mt">${distShort(Math.max(0,x.m-kM))} to go</span></div>`).join("");
   document.getElementById("msList").innerHTML =
-    html || `<div class="msr up"><span class="mn">nothing yet — he's just started</span></div>`;
+    html || `<div class="msr up"><span class="mn">nothing yet — ${esc(ME_FN)} has just started</span></div>`;
 }
 
 // ================= Spec 5: rank history (snapshot trick) =================
@@ -1107,10 +1237,10 @@ function snapSave(){
 }
 // derive one compact record. Ranking mirrors render() exactly (Mercator distance, crew filtered),
 // so the sparkline's last point always equals the rank printed above it. One project() per snapshot.
-function snapRec(rows){
+function snapRec(rows, forA){
   const rn = rows.filter(p=>RCTX.athById[p.athlete_id] && !RCTX.athById[p.athlete_id].crew)
                  .sort((a,b)=>b.distance-a.distance);
-  const i = rn.findIndex(p=>p.athlete_id===KESTER);
+  const i = rn.findIndex(p=>p.athlete_id===forA);
   if(i<0) return null;
   const kp = rn[i], kM = project([kp.lng,kp.lat],RCTX.route,RCTX.cum);
   const f  = kp.distance>0 ? kM/kp.distance : 1;
@@ -1120,6 +1250,7 @@ function snapRec(rows){
 async function rankHistory(){                 // called from load() AFTER render(); never from render()
   if(SNAP_BUSY || !RCTX) return;
   SNAP_BUSY = true;
+  const forA = ATH;                           // records are athlete-relative; a switch invalidates them
   try{
     const S = snapLoad(), want = [];
     for(let t=RCTX.start+SNAP_STEP; t<=RCTX.nowT; t+=SNAP_STEP) if(!S[t]) want.push(t);
@@ -1132,13 +1263,14 @@ async function rankHistory(){                 // called from load() AFTER render
         try{
           const r = await get(`latest_positions?course_ids%5B%5D=${COURSE}`+
                               `&start_time_utc=0&end_time_utc=${t}&table=positions`);
-          const rec = snapRec(r.rows);
+          if(ATH!==forA) return;                                // switched mid-backfill: stop writing
+          const rec = snapRec(r.rows, forA);
           if(rec){ S[t]=rec; changed=true; drawSpark(); }       // build up visibly
         }catch(e){ /* one missing hour is just a gap; the next load retries it */ }
       }
     };
     await Promise.all(Array.from({length:Math.min(SNAP_CONC,todo.length)}, worker));
-    if(changed){ snapSave(); drawSpark(); }
+    if(changed && ATH===forA){ snapSave(); drawSpark(); }       // never persist under the new key
   }catch(e){ console.warn("rank history skipped:", e.message); }
   finally{ SNAP_BUSY = false; }
 }
@@ -1229,10 +1361,10 @@ function mapPopup(latlng){
   if(!CRS.route) return;
   const s=projSnap([latlng.lng, latlng.lat], CRS.route, CRS.cum);   // NOTE the [lng,lat] order
   const gap=s.m-ME_M;
-  const rel = !isFinite(ME_M) ? "his position isn't known yet"
-            : Math.abs(gap)<50 ? "level with him"
-            : gap>0 ? `${distShort(gap)} ahead of him`
-                    : `${distShort(-gap)} behind him`;
+  const rel = !isFinite(ME_M) ? `${ME_FN}'s position isn't known yet`
+            : Math.abs(gap)<50 ? `level with ${ME_FN}`
+            : gap>0 ? `${distShort(gap)} ahead of ${ME_FN}`
+                    : `${distShort(-gap)} behind ${ME_FN}`;
   const el=document.createElement("div"); el.className="mpop";
   el.innerHTML = `<b>${dist(s.m)}</b><span class="ms">${rel}</span>` +
     (s.d>MK_OFF ? `<span class="mw">tap was ${distShort(s.d)} off the course — this is the nearest point on it</span>` : "");
@@ -1275,13 +1407,14 @@ function drawMap(route, cum, cps, runners, athById, kp, localFactor){
     layers.course.setLatLngs(latlngs); layers.hit.setLatLngs(latlngs); layers.src = CRS.src;
     kmMarks(true);                               // new geometry -> drop the cache and redraw
   }
-  // done portion of course up to Kester (nearest index — same fast index as project())
-  if(kp){
+  // done portion of course up to the selected runner (same fast index as project())
+  const me = athById[ATH];
+  if(kp && me){
     const bi = projIdx([kp.lng,kp.lat],route,cum);
     ME_M = cum[bi];                             // == render()'s kM, mirrored for the long-press popup
     layers.done.setLatLngs(latlngs.slice(0,bi+1));
     layers.me.setLatLng([kp.lat,kp.lng]);
-    layers.me.bindTooltip(`Kester · ${esc(athById[KESTER].first_name)} ${esc(athById[KESTER].last_name)}`,{permanent:false});
+    layers.me.bindTooltip(`${esc(me.first_name)} ${esc(me.last_name)} · bib ${esc(me.bib)}`,{permanent:false});
   }
   // checkpoints — full extra_text, ** markers stripped (was split("*")[0], which deleted
   // exactly the two crew-access warnings the crew needs)
@@ -1292,17 +1425,120 @@ function drawMap(route, cum, cps, runners, athById, kp, localFactor){
       .bindTooltip(`${esc(c.name)}${x?" · "+esc(x):""}`,{direction:"top"})
       .addTo(layers.cps);
   });
-  // a few runners around Kester
+  // a few runners around the selected one
   layers.others.clearLayers();
-  const kIdx = runners.findIndex(p=>p.athlete_id===KESTER);
+  const kIdx = runners.findIndex(p=>p.athlete_id===ATH);
   runners.slice(Math.max(0,kIdx-3),kIdx+4).forEach(p=>{
-    if(p.athlete_id===KESTER) return;
+    if(p.athlete_id===ATH) return;
     const ai=athById[p.athlete_id];
     L.circleMarker([p.lat,p.lng],{radius:5,color:"#0d1117",weight:1,fillColor:"#4aa3ff",fillOpacity:.85})
       .bindTooltip(`${ai.first_name} ${ai.last_name} · bib ${ai.bib}`,{direction:"top"})
       .addTo(layers.others);
   });
 }
+
+// ================= Spec 8: athlete selector =================
+// The whole field is already in CACHE (D.ath / D.pos) — the search is pure client-side filtering,
+// no new endpoint, no new request. Crew vehicles (crew:true, bibs 1001+) are excluded.
+// NOTE the \u escapes: written as literal combining marks this line is invisible-and-fragile.
+const norm = s => String(s==null?"":s).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+let PKC = {src:null, list:[]};                 // memoised on D.pos identity — one project() pass/open
+function pkList(){
+  const D = CACHE; if(!D || !D.ath) return [];
+  if(PKC.src===D.pos) return PKC.list;
+  const posBy = {}; (D.pos||[]).forEach(p=>{ posBy[p.athlete_id]=p; });
+  const list = D.ath.filter(x=>!x.crew).map(x=>{
+    const p = posBy[x.id];
+    const fn = x.first_name||"", ln = x.last_name||"";
+    return {id:x.id, fn, ln, bib:x.bib, dnf:!!x.did_not_finish,
+            m: (p && CRS.route) ? project([p.lng,p.lat],CRS.route,CRS.cum) : NaN,
+            k1: norm(fn+" "+ln), k2: norm(ln+" "+fn)};
+  }).sort((x,y)=>(y.m||0)-(x.m||0));           // empty box => leaders first
+  return (PKC={src:D.pos, list}).list;
+}
+function pkDraw(){
+  const raw = document.getElementById("pkIn").value, q = norm(raw).trim();
+  const ls = document.getElementById("pkLs");
+  let out = pkList();
+  if(!out.length){ ls.innerHTML = `<div class="pke">runner list arrives with the first data refresh…</div>`; return; }
+  if(q){
+    const dig = /^\d+$/.test(q);
+    out = out.map(r=>{
+      const b = String(r.bib);
+      const s = dig ? (b===q ? 4 : b.startsWith(q) ? 3 : (r.k1.includes(q)?1:0))
+                    : (r.k1.startsWith(q)||r.k2.startsWith(q) ? 3
+                      : r.k1.includes(q)||r.k2.includes(q) ? 1 : 0);
+      return s ? {r,s} : null;
+    }).filter(Boolean).sort((x,y)=> y.s-x.s || (y.r.m||0)-(x.r.m||0)).map(o=>o.r);
+  }
+  out = out.slice(0,40);
+  ls.innerHTML = out.length ? out.map(r=>
+      `<button class="pkr${r.id===ATH?" on":""}" type="button" data-id="${r.id}">`+
+      `<span class="pkb">${esc(r.bib)}</span>`+
+      `<span class="pkn">${esc(r.fn)} ${esc(r.ln)}</span>`+
+      (r.dnf?`<span class="pkd">DNF</span>`:"")+
+      `<span class="pkm">${isFinite(r.m)?distShort(r.m):"—"}</span></button>`).join("")
+    : `<div class="pke">no runner matches “${esc(raw)}”</div>`;
+}
+function pkOpen(){
+  const d=document.getElementById("pick"), i=document.getElementById("pkIn");
+  d.hidden=false; i.value=""; pkDraw();
+  i.focus();                                   // synchronous: iOS only opens the keyboard inside the gesture
+}
+function pkClose(){ document.getElementById("pick").hidden=true; }
+// paint identity from the athlete row. ONE writer for every name/bib on the page.
+// ME_FN / ME_NM are stored PRE-ESCAPED: they reach innerHTML in mapPopup() and the milestones.
+function paintIdent(a){
+  ME_FN = esc(a.first_name||"the runner");
+  ME_NM = esc(`${a.first_name||""} ${a.last_name||""}`.trim());
+  const nm = `${a.first_name||""} ${a.last_name||""}`.trim();
+  document.getElementById("athName").textContent = nm;
+  document.getElementById("athBib").textContent  = "· bib "+a.bib;
+  document.getElementById("hName").textContent   = nm;
+  document.getElementById("hBib").textContent    = a.bib;
+  document.getElementById("lGender").textContent =
+    a.gender==="F" ? "Female" : a.gender==="M" ? "Male" : "Gender";
+  document.title = `${nm} · ${RACE_NM}`;
+}
+// pre-data paint from the stored hint, so a reload never flashes the wrong runner
+function paintHint(){
+  if(!ATH_HINT || !ATH_HINT.n) return;
+  document.getElementById("athName").textContent = ATH_HINT.n;
+  document.getElementById("athBib").textContent  = ATH_HINT.b!=null ? "· bib "+ATH_HINT.b : "·";
+  document.getElementById("hName").textContent   = ATH_HINT.n;
+  if(ATH_HINT.b!=null) document.getElementById("hBib").textContent = ATH_HINT.b;
+  document.title = `${ATH_HINT.n} · ${RACE_NM}`;
+}
+// adopt an athlete row: id, storage keys, every scrap of per-athlete state. Shared by the picker
+// and by render()'s heal path. Does NOT render and does NOT fetch — callers decide.
+function adopt(a){
+  ATH = a.id; saveAth(a); athKeys(); athGC();
+  MOVES = movLoad();                    // the new runner's log, or empty
+  MS_STORE = null; MS_FRESH = false; MS_TXT = [];   // msLoad() re-reads the new key next render
+  SNAPS = null; RCTX = null;            // rank series + gaps are athlete-relative
+  ME_M = NaN;                           // map popup must not compare against the old runner
+  paintIdent(a);
+}
+function setAth(id){
+  const a = (CACHE.ath||[]).find(x=>x.id===id);
+  pkClose();
+  if(!a || id===ATH) return;
+  adopt(a);
+  CACHE.trk = null;                     // the cached track belongs to the PREVIOUS runner
+  if(CACHE.course) render(CACHE);       // instant: rank, splits, ETA, milestones all come from CACHE
+  loadNow();                            // one fresh athlete_track fetch, bounded by LOAD_AT
+}
+document.getElementById("athBtn").addEventListener("click", pkOpen);
+document.getElementById("pkX").addEventListener("click", pkClose);
+document.getElementById("pick").addEventListener("click", e=>{ if(e.target.id==="pick") pkClose(); });
+document.getElementById("pkIn").addEventListener("input", pkDraw);
+document.getElementById("pkIn").addEventListener("keydown", e=>{
+  if(e.key==="Escape") pkClose();
+  if(e.key==="Enter"){ const b=document.querySelector("#pkLs .pkr"); if(b) setAth(+b.dataset.id); }
+});
+document.getElementById("pkLs").addEventListener("click", e=>{
+  const b=e.target.closest(".pkr"); if(b) setAth(+b.dataset.id);
+});
 
 // unit toggle
 document.getElementById("unitToggle").addEventListener("click",e=>{
@@ -1340,6 +1576,7 @@ document.getElementById("msList").addEventListener("click",e=>{      // delegate
         ()=>{} ); }catch(err){}                                      // fail silently (B3-h)
 });
 
+paintHint();                    // name/bib/title from storage before the first byte arrives
 load();
 setInterval(load, REFRESH_MS);
 </script>
